@@ -4,7 +4,6 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
-.pytest_cache/
 .ruff_cache/
 
 # Cached engine evaluations: large, regenerable, machine-specific.
@@ -39,3 +38,4 @@ frontend/.vite/
 
 *.log
 .DS_Store
+.claude/settings.local.json

@@ -5,6 +5,7 @@ const LINKS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/games', label: 'Games' },
   { to: '/patterns', label: 'Patterns' },
+  { to: '/training', label: 'Training' },
   { to: '/dna', label: 'Chess DNA' },
 ]
 

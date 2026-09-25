@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from statistics import median
 from typing import Any, Callable, Iterable, Optional
 
+from app.chess.book import BookReader
 from app.mining.mistake_detector import MinerConfig, build_records
 
 MIN_GAMES_FOR_PATTERN = 2
@@ -42,11 +44,28 @@ def tally_many(mistakes: Iterable[dict], key: Callable[[dict], list]) -> list[di
     ]
 
 
+def book_summary(context: dict) -> dict:
+    depths = context.pop("book_depths", []) or []
+    middle = int(median(depths)) if depths else None
+    return {
+        "path": context.get("book"),
+        "positions": context.get("book_positions", 0),
+        "in_book": context.get("moves_in_book", 0),
+        "mistakes_in_book": context.get("mistakes_in_book", 0),
+        "excluded": context.get("excluded_book", 0),
+        "games_following_book": context.get("games_with_book", 0),
+        "median_book_ply": middle,
+        "median_book_move": (middle + 1) // 2 if middle else None,
+    }
+
+
 def mine_patterns(
-    games: dict[str, dict], config: Optional[MinerConfig] = None
+    games: dict[str, dict],
+    config: Optional[MinerConfig] = None,
+    reader: Optional[BookReader] = None,
 ) -> dict:
     config = config or MinerConfig()
-    mistakes, context = build_records(games, config)
+    mistakes, context = build_records(games, config, reader)
 
     patterns = {
         "category": tally(mistakes, lambda item: item["category"]),
@@ -76,6 +95,7 @@ def mine_patterns(
     return {
         "config": config.as_dict(),
         "context": context,
+        "book": book_summary(context),
         "mistakes": mistakes,
         "patterns": patterns,
         "recurring": recurring,

@@ -29,6 +29,7 @@ python -m app.main --pgn data/sample_games.pgn --limit-time 0.05
                       ┌──────────────────────────────────────────────┐
    PGN file ─────────▶│ app/chess/                                   │
    (CLI, upload)      │   pgn_parser → engine → evaluator → features │
+                      │                      ↘ see / motifs         │
                       └───────────────────┬──────────────────────────┘
                                           │ per-move evaluations (JSON cache)
                                           ▼
@@ -68,12 +69,16 @@ data/             uploads, analysis cache, SQLite database, sample PGN
 | `app/chess/engine.py` | Find the Stockfish binary, wrap UCI, describe a search limit |
 | `app/chess/evaluator.py` | Evaluate before/after each move, normalise perspective, build move records |
 | `app/chess/features.py` | Board facts: material, phase, hanging pieces, king safety, move flags |
+| `app/chess/pieces.py` | Piece names and values — the tables `features`, `see` and `motifs` all share |
+| `app/chess/see.py` | Static exchange evaluation: what a capture actually wins |
+| `app/chess/motifs.py` | Tactical motifs: mates, forks, pins and skewers a position offers |
 | `app/mining/mistake_detector.py` | Thresholds, severity bands, categories, per-move mistake records |
 | `app/mining/pattern_miner.py` | Aggregate records into counts, and decide what counts as recurring |
 | `app/mining/profiler.py` | The profile and its evidence-only observations |
 | `app/database/models.py` | `Game`, `Move`, `Mistake`, `PlayerProfile`, `Pattern` |
 | `app/services/game_service.py` | Uploads, storage, queries, JSON shapes for games |
 | `app/services/analysis_service.py` | The engine pass, the cache, mining, persistence |
+| `app/services/export_service.py` | Mistake records as JSON, CSV or JSONL, for the CLI and the API |
 | `app/api/*.py` | `/api/games`, `/api/analysis`, `/api/patterns` |
 | `app/main.py` | FastAPI app (lifespan, CORS, static frontend) and the CLI |
 
@@ -123,8 +128,9 @@ python -m app.main --pgn data/sample_games.pgn --player Alice
 | `--player` | — | Only report this player's mistakes (matched against PGN headers) |
 | `--color` | `both` | Restrict to `white` or `black` |
 | `--time-pressure` | `30` | Seconds below which a move counts as time-pressured |
-| `--cache` | `data/analysis_cache.json` | Where the evaluation cache lives |
-| `--output` | — | Write the full report to JSON |
+| `--cache` | `$ANALYSIS_CACHE`, else `<ANALYSIS_DIR>/eval_cache.json` | Where the evaluation cache lives |
+| `--output` | — | Write the mistake records to a file; the format follows the extension |
+| `--output-format` | from the extension | Force `json`, `csv` or `jsonl` regardless of the filename |
 | `--no-cache` / `--rebuild-cache` | — | Ignore, or discard and rebuild, the cache |
 | `--include-decided` | — | Also count mistakes made in already-decided positions |
 | `--save` | — | Also store games and results in the database |
@@ -132,6 +138,22 @@ python -m app.main --pgn data/sample_games.pgn --player Alice
 
 `--player` matters more than it looks. Without it you get your opponent's blunders mixed in with yours,
 which is exactly the data you don't want.
+
+### Exports
+
+`--output` writes the mistake records, not the whole report, in the format the extension implies:
+`.csv` gives one flat row per mistake with a fixed 28-column header (`motifs_allowed` and the hung
+piece's square and SEE value among them), `.jsonl` gives the same rows as newline-delimited objects,
+and `.json` gives the entire report including patterns, profile and observations. `--output-format`
+overrides the extension when the name is something else.
+
+```bash
+python -m app.main --output mistakes.csv            # spreadsheet-ready
+python -m app.main --output report.jsonl            # one object per line, for jq or a loader
+python -m app.main --output out.dat --output-format csv
+```
+
+The same three formats are available over HTTP from `POST /api/analysis/export`.
 
 ### Example output
 
@@ -154,13 +176,19 @@ Recurring patterns
 Most common mistake phase: middlegame
 By severity: blunder 38, mistake 61, inaccuracy 43
 
+Tactics handed to the opponent
+------------------------------
+  Pin allowed                18  (14 games)
+  Fork allowed               11  (9 games)
+  Mate allowed                6  (5 games)
+
 Largest single evaluation loss
 ------------------------------
   Game 42, move 27 (white)
   Played: Qe2
   Best:   Bxh7+
   Loss:   3.10 pawns (+0.80 -> -2.30)
-  Why:    the engine's preferred move was a capture; a quiet move was played instead
+  Why:    this move left the queen on e2 en prise, worth 3 pawns by static exchange
 
 Profile
 -------
@@ -212,6 +240,7 @@ database, uploads and cache survive rebuilds.
 | `GET`/`DELETE` | `/api/games/{id}` | One game with its stored moves / delete it |
 | `POST` | `/api/analysis/run` | Analyze stored games (JSON body: player, color, depth, thresholds…) |
 | `POST` | `/api/analysis/upload` | Upload and analyze in one request |
+| `POST` | `/api/analysis/export` | Download the mistakes as `json`, `csv` or `jsonl` (same body as `/run`) |
 | `GET`/`DELETE` | `/api/analysis/cache` | Cache contents / clear it |
 | `GET` | `/api/analysis/mistakes` | Stored mistakes (`game_id`, `category`, `severity`, `player`) |
 | `GET` | `/api/analysis/games/{id}` | One analyzed game with its moves and mistakes |
@@ -273,9 +302,30 @@ already winning before *and* after (≥ 90% win chance), or already lost before 
 move that collapses a winning position is not decided — that is precisely the mistake worth counting.
 Decided positions are excluded by default, and the report always says how many were excluded.
 
-**A hanging piece is only reported when a legal capture exists.** The detector checks for an attacker
-cheaper than the piece, but gates the whole thing on the opponent actually having a legal capture onto
-that square — which is what suppresses pinned attackers.
+**A hanging piece is a static exchange, not a price comparison.** The older test — "is this attacked
+by something cheaper than it is worth" — calls a defended queen attacked by a knight a loss, and misses
+a queen attacked by a rook behind a pawn. The detector now runs a full static exchange over the square
+and reports the piece only when the exchange actually wins material. Both sides are free to stop
+capturing at any point, which is what makes it a real exchange rather than a count of attackers.
+
+**A hanging piece is only reported when a legal capture exists.** The whole thing stays gated on the
+opponent actually having a legal capture onto that square — which is what suppresses pinned attackers.
+
+**Attribution is a delta, not a state.** "This move left a piece loose" compares the loose pieces
+before the move with those after it, and reports only the difference. Asking whether *anything* is
+hanging would blame a move for a piece that was already lost, and would flag every position in a lost
+game regardless of what was played.
+
+**Asking what a side could do requires giving them the move.** The before-the-move facts are computed
+on a copy of the board with a null move pushed, because a position evaluated with the wrong side to
+move answers a different question. That flip is illegal in check and in finished positions, so it is
+guarded and returns nothing there rather than raising.
+
+**Motifs describe what the position offered, not what was played.** `motifs_before` is what the mover
+could have done; `motifs_allowed` is what the position offers the opponent afterwards. The second is
+what the report calls "tactics handed to the opponent", and it is derived from the board, not from the
+played move's SAN — a move that walks into a fork is described as doing so even when the fork is not
+apparent from the notation.
 
 ## Thresholds, and what they are worth
 
@@ -301,9 +351,11 @@ nothing at all.
 Every record keeps two things apart:
 
 - **`facts`** — what is observable. Was the move a capture? A check? Did it leave a piece loose? What
-  did the clock say?
+  tactics does the resulting position offer the opponent, and what did the static exchange say the
+  loose piece was worth? What did the clock say?
 - **`category`** — a *heuristic* label, always accompanied by a `category_basis` string explaining the
-  board facts behind it.
+  board facts behind it. Each `motifs_allowed` entry likewise carries its own `detail` line, so a
+  reader sees the fork itself rather than having to trust the word.
 
 The report states frequencies and conditions ("31 mistakes were played with under 30 seconds
 remaining"). It does not claim to know why you played them, because the data cannot support that claim.
@@ -311,13 +363,18 @@ The stricter version of that rule: the observations must not contain motive word
 
 ## Known limitations
 
-- **The hanging-piece detector is a hint, not a verdict.** It checks whether a piece is attacked by
-  something cheaper and whether a legal capture exists. It does not do a full static exchange
-  evaluation, so it ignores x-rays, overloaded defenders, and sacrifices that are actually sound. SEE is
-  the V2 fix.
+- **Static exchange evaluation is exact within its rules, and its rules are not chess.** SEE assumes
+  both sides keep capturing on one square, values pieces by a fixed table, and knows nothing about
+  check, mate, or a defender that is pinned. It is a large improvement on counting attackers, and it is
+  still a hint rather than a verdict.
 - **Categories are heuristics.** A move can satisfy several tests at once; exactly one category is
-  assigned, by a fixed priority order (missed mate → hanging piece → missed capture → time pressure →
-  phase), so counts never double-count a single mistake.
+  assigned, by a fixed priority order (allowed mate → missed mate → newly hanging piece → piece still
+  hanging → missed capture → time pressure → phase), so counts never double-count a single mistake.
+  The tactics a move hands over are reported separately and *can* outnumber the mistakes, because one
+  move can hand over more than one.
+- **Motif detection is a shallow search, not a tactic solver.** A fork is a piece attacking two things
+  at once; a pin is a line through a more valuable piece. Neither looks more than a few plies ahead, so
+  a combination that wins material over three moves is not recognised as one.
 - **Phase is approximate.** "Opening / middlegame / endgame" is decided by remaining material and move
   number. Chess has no crisp definition of these, so treat them as grouping labels.
 - **Time pressure needs clock data.** Chess.com includes it; many other PGN sources do not. The report
@@ -336,10 +393,10 @@ rule — are in the sections above.
 
 ## Roadmap
 
-- **V1 (this)** — PGN in, Stockfish evaluation, evaluation-loss detection, mistake records, pattern
-  mining, terminal report, REST API, database, web dashboard, profile.
-- **V2** — Static exchange evaluation for accurate hanging-piece detection; tactical motif recognition;
-  richer exports.
+- **V1** — PGN in, Stockfish evaluation, evaluation-loss detection, mistake records, pattern mining,
+  terminal report, REST API, database, web dashboard, profile.
+- **V2 (this)** — Static exchange evaluation for accurate hanging-piece detection; tactical motif
+  recognition (mates, forks, pins, skewers); richer exports (JSON, CSV, JSONL, over the CLI and the API).
 - **V3** — Training mode: replay your own mistakes as puzzles instead of just listing them.
 - **V4** — Multi-engine and parallel analysis; opening-book awareness.
 - **V5** — Optional ML/LLM layer for explanation and clustering, once there is a dataset worth using.

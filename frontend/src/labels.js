@@ -1,4 +1,5 @@
 export const CATEGORY_LABELS = {
+  allowed_mate: 'Allowed mates',
   missed_mate: 'Missed mates',
   hanging_piece: 'Hanging pieces',
   missed_capture: 'Missed captures',
@@ -6,6 +7,13 @@ export const CATEGORY_LABELS = {
   opening: 'Opening mistakes',
   middlegame: 'Middlegame mistakes',
   endgame: 'Endgame mistakes',
+}
+
+export const MOTIF_LABELS = {
+  mate: 'Mate allowed',
+  fork: 'Fork allowed',
+  pin: 'Pin allowed',
+  skewer: 'Skewer allowed',
 }
 
 export const PHASE_LABELS = {
@@ -24,10 +32,15 @@ export const PATTERN_KIND_LABELS = {
   opening: 'Opening',
   move_bucket: 'Move number',
   hung_piece: 'Piece left loose',
+  motif: 'Tactic handed over',
 }
 
 export function categoryLabel(key) {
   return CATEGORY_LABELS[key] || key
+}
+
+export function motifLabel(key) {
+  return MOTIF_LABELS[key] || key
 }
 
 export function phaseLabel(key) {

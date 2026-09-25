@@ -1,5 +1,5 @@
 import SeverityBadge from './SeverityBadge.jsx'
-import { categoryLabel, phaseLabel } from '../labels.js'
+import { categoryLabel, motifLabel, phaseLabel } from '../labels.js'
 
 function formatEval(value) {
   if (value === null || value === undefined) return '—'
@@ -14,6 +14,8 @@ function formatClock(seconds) {
 
 export default function MistakeCard({ mistake, onSelect, selected }) {
   const clock = formatClock(mistake.time_remaining)
+  const motifs = mistake.facts?.motifs_allowed || []
+  const hung = mistake.facts?.hung_piece
   return (
     <div className="card mistake-card">
       <div className="head">
@@ -53,7 +55,29 @@ export default function MistakeCard({ mistake, onSelect, selected }) {
         {clock ? <span>Clock {clock}</span> : null}
         {mistake.in_time_pressure ? <span className="badge">time pressure</span> : null}
         {mistake.game_decided ? <span className="badge">decided position</span> : null}
+        {motifs.map((motif) => (
+          <span className="badge" key={`${motif.kind}-${motif.detail || ''}`}>
+            {motifLabel(motif.kind)}
+          </span>
+        ))}
       </div>
+
+      {motifs.length ? (
+        <ul className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>
+          {motifs.map((motif) => (
+            <li key={`${motif.kind}-${motif.detail || ''}`}>{motif.detail || motifLabel(motif.kind)}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      {hung && hung.square ? (
+        <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>
+          {hung.name || hung.piece} on {hung.square}
+          {hung.see_pawns
+            ? ` — the opponent wins ${Number(hung.see_pawns).toFixed(1)} pawns by exchange`
+            : null}
+        </p>
+      ) : null}
 
       {mistake.category_basis ? (
         <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>

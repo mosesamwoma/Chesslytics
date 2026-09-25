@@ -12,11 +12,13 @@ from app.chess.features import (
     castling_rights,
     find_hanging_pieces,
     game_phase,
+    hanging_before,
     is_mate_move,
     king_safety,
     material_balance,
     move_facts,
 )
+from app.chess.motifs import detect_motifs
 from app.chess.pgn_parser import clock_of, game_fingerprint, game_metadata
 
 MATE_SCORE_CP = 10_000
@@ -69,6 +71,8 @@ def evaluate_move(
     record.update(move_facts(board, move))
 
     try:
+        record["hanging_before"] = hanging_before(board, color)
+        record["motifs_before"] = detect_motifs(board, color)
         info_before = engine.analyse(board, engine_limit)
         eval_before, mate_before = score_to_cp(info_before["score"], color)
         pv = info_before.get("pv") or []
@@ -89,6 +93,7 @@ def evaluate_move(
                 eval_after, mate_after = score_to_cp(info_after["score"], color)
 
             record["hanging_after"] = find_hanging_pieces(board, color)
+            record["motifs_allowed"] = detect_motifs(board, board.turn)
             record["king_safety_after"] = king_safety(board, color)
         finally:
             board.pop()

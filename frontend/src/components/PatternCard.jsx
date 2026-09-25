@@ -1,7 +1,10 @@
-import { PATTERN_KIND_LABELS, categoryLabel } from '../labels.js'
+import { PATTERN_KIND_LABELS, categoryLabel, motifLabel } from '../labels.js'
+
+const KEY_LABELS = { category: categoryLabel, motif: motifLabel }
 
 export default function PatternCard({ pattern }) {
-  const label = pattern.kind === 'category' ? categoryLabel(pattern.key) : pattern.key
+  const labelFor = KEY_LABELS[pattern.kind]
+  const label = labelFor ? labelFor(pattern.key) : pattern.key
   return (
     <div className="card">
       <div className="game-card">

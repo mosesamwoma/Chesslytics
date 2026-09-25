@@ -2,23 +2,8 @@ from __future__ import annotations
 
 import chess
 
-PIECE_NAMES = {
-    chess.PAWN: "pawn",
-    chess.KNIGHT: "knight",
-    chess.BISHOP: "bishop",
-    chess.ROOK: "rook",
-    chess.QUEEN: "queen",
-    chess.KING: "king",
-}
-
-PIECE_VALUES = {
-    chess.PAWN: 1,
-    chess.KNIGHT: 3,
-    chess.BISHOP: 3,
-    chess.ROOK: 5,
-    chess.QUEEN: 9,
-    chess.KING: 0,
-}
+from app.chess.pieces import PIECE_NAMES, PIECE_VALUES
+from app.chess.see import static_exchange
 
 
 def material_balance(board: chess.Board) -> dict:
@@ -55,46 +40,66 @@ def game_phase(board: chess.Board, move_number: int) -> str:
     return "middlegame"
 
 
+def _en_passant_victim_square(move: chess.Move) -> chess.Square:
+    return chess.square(chess.square_file(move.to_square), chess.square_rank(move.from_square))
+
+
 def find_hanging_pieces(board: chess.Board, color: chess.Color) -> list[dict]:
     opponent = not color
-    capturable = {
-        move.to_square for move in board.legal_moves if board.is_capture(move)
-    }
+    best_by_square: dict[chess.Square, dict] = {}
 
-    result: list[dict] = []
-    for square, piece in board.piece_map().items():
-        if piece.color != color or piece.piece_type == chess.KING:
+    for move in board.legal_moves:
+        if not board.is_capture(move):
             continue
-        if square not in capturable:
-            continue
-
-        attacker_squares = board.attackers(opponent, square)
-        if not attacker_squares:
-            continue
-
-        piece_value = PIECE_VALUES[piece.piece_type]
-        cheapest = min(
-            PIECE_VALUES[board.piece_at(square_).piece_type]
-            for square_ in attacker_squares
+        square = move.to_square
+        victim = (
+            board.piece_at(_en_passant_victim_square(move))
+            if board.is_en_passant(move)
+            else board.piece_at(square)
         )
-        if cheapest >= piece_value:
+        if victim is None or victim.color != color or victim.piece_type == chess.KING:
             continue
 
+        gain = static_exchange(board, move)
+        if gain <= 0:
+            continue
+        if square in best_by_square and best_by_square[square]["see"] >= gain:
+            continue
+
+        attackers = board.attackers(opponent, square)
         defenders = board.attackers(color, square)
-        result.append(
-            {
-                "square": chess.square_name(square),
-                "piece": piece.symbol(),
-                "name": PIECE_NAMES[piece.piece_type],
-                "value": piece_value,
-                "cheapest_attacker": cheapest,
-                "attackers": len(attacker_squares),
-                "defended": bool(defenders),
-            }
-        )
+        best_by_square[square] = {
+            "square": chess.square_name(square),
+            "piece": victim.symbol(),
+            "name": PIECE_NAMES[victim.piece_type],
+            "value": PIECE_VALUES[victim.piece_type],
+            "see": gain,
+            "see_pawns": round(gain / 100.0, 2),
+            "cheapest_attacker": min(
+                (PIECE_VALUES[board.piece_at(square_).piece_type] for square_ in attackers),
+                default=0,
+            ),
+            "attackers": len(attackers),
+            "defended": bool(defenders),
+            "winning_capture": move.uci(),
+        }
 
-    result.sort(key=lambda item: -item["value"])
-    return result
+    return sorted(
+        best_by_square.values(), key=lambda item: (-item["see"], item["square"])
+    )
+
+
+def hanging_before(board: chess.Board, color: chess.Color) -> list[dict]:
+    probe = board.copy(stack=False)
+    if probe.is_check() or probe.is_game_over():
+        return []
+    probe.push(chess.Move.null())
+    return find_hanging_pieces(probe, color)
+
+
+def newly_hanging(before: list[dict], after: list[dict]) -> list[dict]:
+    seen = {(item["square"], item["piece"]) for item in before}
+    return [item for item in after if (item["square"], item["piece"]) not in seen]
 
 
 def is_mate_move(board: chess.Board, move: chess.Move) -> bool:

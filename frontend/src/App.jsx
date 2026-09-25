@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard.jsx'
 import GameAnalysis from './pages/GameAnalysis.jsx'
 import Games from './pages/Games.jsx'
 import Patterns from './pages/Patterns.jsx'
+import Training from './pages/Training.jsx'
 
 function NotFound() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/games" element={<Games />} />
           <Route path="/games/:gameId" element={<GameAnalysis />} />
           <Route path="/patterns" element={<Patterns />} />
+          <Route path="/training" element={<Training />} />
           <Route path="/dna" element={<ChessDNA />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

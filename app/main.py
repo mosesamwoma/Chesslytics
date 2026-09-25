@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import analysis, games, patterns
+from app.api import analysis, games, patterns, training
 from app.chess.engine import SearchLimit
 from app.database.database import init_db, session_scope
 from app.mining.mistake_detector import MinerConfig
@@ -45,6 +45,7 @@ app.add_middleware(
 app.include_router(games.router)
 app.include_router(analysis.router)
 app.include_router(patterns.router)
+app.include_router(training.router)
 
 
 @app.get("/api/health")
@@ -124,6 +125,32 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument("--stockfish", default=None, help="path to the Stockfish binary")
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.environ.get("PARALLEL_WORKERS", 1)),
+        help="analyze this many games in parallel, each in its own engine process "
+        "(default: 1, or $PARALLEL_WORKERS). Above 1 every worker is pinned to a single "
+        "thread, because Stockfish otherwise uses every core on its own.",
+    )
+    parser.add_argument(
+        "--verify-with",
+        default=os.environ.get("VERIFY_WITH") or None,
+        help="a second engine binary; every mistake is re-checked with it and marked "
+        "agreed or disputed. One engine call per position re-checked, cached separately "
+        "from the evaluation cache.",
+    )
+    parser.add_argument(
+        "--book",
+        default=None,
+        help="Polyglot (.bin) opening book; mistakes played while the book still had a "
+        "move are marked as theory (default: $BOOK_PATH)",
+    )
+    parser.add_argument(
+        "--exclude-book",
+        action="store_true",
+        help="drop mistakes played while still in the opening book from every count",
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="write the mistake records to a file; the format follows the file "
@@ -176,6 +203,9 @@ def format_report(report: dict, config: MinerConfig) -> str:
     lines.append("=" * 20)
     lines.append("")
     lines.append(f"Engine: {report.get('engine')}  |  search: {describe_limit(report.get('limit'))}")
+    workers = report.get("workers") or 1
+    if workers > 1:
+        lines.append(f"Workers: {workers} engine processes")
     lines.append(f"Games analyzed: {context.get('games_analyzed', 0)}")
     if config.player:
         lines.append(f"Games with {config.player}: {context.get('games_matched_player', 0)}")
@@ -260,6 +290,8 @@ def format_report(report: dict, config: MinerConfig) -> str:
         )
         lines.append(f"  Played: {largest['played_move']}")
         lines.append(f"  Best:   {largest['best_move']}")
+        if largest.get("book_move"):
+            lines.append(f"  Book:   {largest['book_move']}")
         lines.append(
             f"  Loss:   {largest['loss']:.2f} pawns "
             f"({largest['eval_before']:+.2f} -> {largest['eval_after']:+.2f})"
@@ -267,6 +299,52 @@ def format_report(report: dict, config: MinerConfig) -> str:
         lines.append(f"  Why:    {largest['category_basis']}")
         if largest.get("mate_before") is not None:
             lines.append(f"  Note:   mate in {largest['mate_before']} was available")
+        if largest.get("agreed") is False:
+            lines.append(
+                f"  Note:   {largest.get('verified_by')} did not score this as a loss "
+                f"(it measured {largest.get('verified_loss'):.2f} pawns)"
+            )
+
+    verify = report.get("verify") or {}
+    if verify.get("verified"):
+        lines.append("")
+        lines.append("Engine agreement")
+        lines.append("-" * 16)
+        lines.append(
+            f"  Verified with {verify['engine']} "
+            f"({describe_limit(verify.get('limit'))})"
+        )
+        lines.append(
+            f"  Agreed: {verify['agreed']} of {verify['verified']} mistakes "
+            f"({verify.get('agreement')}%)"
+        )
+        lines.append(f"  Disputed: {verify['disputed']}")
+        if verify.get("unverified"):
+            lines.append(f"  Not checked: {verify['unverified']} (no stored position)")
+
+    book = report.get("book") or {}
+    if book.get("path"):
+        lines.append("")
+        lines.append("Opening book")
+        lines.append("-" * 12)
+        lines.append(f"  Book: {book['path']}")
+        lines.append(
+            f"  A book move existed in {book.get('in_book', 0)} of "
+            f"{book.get('positions', 0)} positions examined"
+        )
+        if book.get("mistakes_in_book"):
+            lines.append(
+                f"  Mistakes played while still in book: {book['mistakes_in_book']}"
+            )
+        if book.get("median_book_move"):
+            lines.append(
+                f"  Book ran out at a median of move {book['median_book_move']} "
+                f"({book.get('games_following_book', 0)} games reached it)"
+            )
+        if book.get("excluded"):
+            lines.append(
+                f"  Excluded from every count above: {book['excluded']} (still theory)"
+            )
 
     if profile:
         lines.append("")
@@ -324,6 +402,8 @@ def main(argv=None) -> int:
         player=args.player,
         color=args.color,
         ignore_decided=not args.include_decided,
+        book=args.book,
+        exclude_book=args.exclude_book,
     )
 
     if args.save:
@@ -343,10 +423,16 @@ def main(argv=None) -> int:
                 progress=progress,
                 persist=args.save,
                 cache_path=args.cache,
+                book=args.book,
+                workers=max(1, args.workers),
+                verify_with=args.verify_with,
             )
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     except Exception as exc:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 4
@@ -371,6 +457,8 @@ def main(argv=None) -> int:
     failed = (report.get("context") or {}).get("moves_failed", 0)
     if failed:
         progress(f"warning: {failed} positions failed to evaluate")
+    for failure in counts.get("failures") or []:
+        progress(f"warning: a game could not be evaluated: {failure}")
 
     print(format_report(report, config))
 

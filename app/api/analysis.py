@@ -40,6 +40,10 @@ class AnalysisRequest(BaseModel):
     use_cache: bool = True
     rebuild_cache: bool = False
     stockfish_path: Optional[str] = None
+    workers: int = Field(default=1, ge=1, le=64)
+    verify_with: Optional[str] = None
+    book: Optional[str] = None
+    exclude_book: bool = False
 
 
 class ExportRequest(AnalysisRequest):
@@ -56,6 +60,8 @@ def _config_from(request: AnalysisRequest) -> MinerConfig:
         request.mistake,
         request.blunder,
         request.ignore_decided,
+        request.book,
+        request.exclude_book,
     )
 
 
@@ -68,6 +74,8 @@ def _config(
     mistake: float,
     blunder: float,
     ignore_decided: bool,
+    book: Optional[str] = None,
+    exclude_book: bool = False,
 ) -> MinerConfig:
     return MinerConfig(
         min_loss=min_loss,
@@ -78,6 +86,8 @@ def _config(
         mistake=mistake,
         blunder=blunder,
         ignore_decided=ignore_decided,
+        book=book,
+        exclude_book=exclude_book,
     )
 
 
@@ -96,6 +106,8 @@ def _report_summary(report: dict) -> dict:
         "errors": report.get("errors", []),
         "context": report.get("context", {}),
         "config": report.get("config", {}),
+        "book": report.get("book", {}),
+        "verify": report.get("verify", {}),
         "profile": report.get("profile", {}),
         "patterns": report.get("patterns", {}),
         "recurring": report.get("recurring", {}),
@@ -116,6 +128,9 @@ def run_analysis(request: AnalysisRequest, db: Session = Depends(get_db)) -> dic
             engine_path=request.stockfish_path,
             use_cache=request.use_cache,
             rebuild_cache=request.rebuild_cache,
+            book=request.book,
+            workers=request.workers,
+            verify_with=request.verify_with,
         )
     except ValueError as exc:
         db.rollback()
@@ -155,6 +170,9 @@ def export_mistakes(request: ExportRequest, db: Session = Depends(get_db)) -> Re
             engine_path=request.stockfish_path,
             use_cache=request.use_cache,
             rebuild_cache=request.rebuild_cache,
+            book=request.book,
+            workers=request.workers,
+            verify_with=request.verify_with,
         )
     except ValueError as exc:
         db.rollback()
@@ -187,6 +205,10 @@ async def upload_and_analyze(
     use_cache: bool = Form(default=True),
     rebuild_cache: bool = Form(default=False),
     stockfish_path: Optional[str] = Form(default=None),
+    workers: int = Form(default=1),
+    verify_with: Optional[str] = Form(default=None),
+    book: Optional[str] = Form(default=None),
+    exclude_book: bool = Form(default=False),
     db: Session = Depends(get_db),
 ) -> dict:
     content = await file.read()
@@ -205,12 +227,17 @@ async def upload_and_analyze(
                 1.0,
                 2.0,
                 ignore_decided,
+                book,
+                exclude_book,
             ),
             limit=_limit(depth, time_limit),
             engine_path=stockfish_path,
             use_cache=use_cache,
             rebuild_cache=rebuild_cache,
             persist=True,
+            workers=max(1, workers),
+            verify_with=verify_with,
+            book=book,
         )
     except ValueError as exc:
         db.rollback()

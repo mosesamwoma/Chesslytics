@@ -5,6 +5,7 @@ from statistics import mean
 from app.mining.pattern_miner import MIN_GAMES_FOR_PATTERN
 
 CATEGORY_LABELS = {
+    "allowed_mate": "Allowed mates",
     "missed_mate": "Missed mates",
     "hanging_piece": "Hanging pieces",
     "missed_capture": "Missed captures",
@@ -13,6 +14,17 @@ CATEGORY_LABELS = {
     "middlegame": "Middlegame mistakes",
     "endgame": "Endgame mistakes",
 }
+
+MOTIF_LABELS = {
+    "mate": "Mate allowed",
+    "fork": "Fork allowed",
+    "pin": "Pin allowed",
+    "skewer": "Skewer allowed",
+}
+
+
+def motif_label(kind: str) -> str:
+    return MOTIF_LABELS.get(kind, kind)
 
 
 def label_for(category: str) -> str:
@@ -73,7 +85,7 @@ def build_profile(report: dict) -> dict:
 
     tactical = [
         row for row in report["patterns"]["category"]
-        if row["key"] in ("hanging_piece", "missed_capture", "missed_mate")
+        if row["key"] in ("allowed_mate", "hanging_piece", "missed_capture", "missed_mate")
     ]
     profile["tactical_weaknesses"] = [
         {"category": row["key"], "label": label_for(row["key"]), "count": row["count"], "games": row["games"]}

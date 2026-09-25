@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,7 +20,7 @@ from app.chess.engine import SearchLimit
 from app.database.database import get_db
 from app.database.models import Game
 from app.mining.mistake_detector import MinerConfig
-from app.services import analysis_service, game_service
+from app.services import analysis_service, export_service, game_service
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
@@ -31,6 +40,23 @@ class AnalysisRequest(BaseModel):
     use_cache: bool = True
     rebuild_cache: bool = False
     stockfish_path: Optional[str] = None
+
+
+class ExportRequest(AnalysisRequest):
+    format: str = "csv"
+
+
+def _config_from(request: AnalysisRequest) -> MinerConfig:
+    return _config(
+        request.player,
+        request.color,
+        request.min_loss,
+        request.time_pressure,
+        request.inaccuracy,
+        request.mistake,
+        request.blunder,
+        request.ignore_decided,
+    )
 
 
 def _config(
@@ -80,16 +106,7 @@ def _report_summary(report: dict) -> dict:
 
 @router.post("/run")
 def run_analysis(request: AnalysisRequest, db: Session = Depends(get_db)) -> dict:
-    config = _config(
-        request.player,
-        request.color,
-        request.min_loss,
-        request.time_pressure,
-        request.inaccuracy,
-        request.mistake,
-        request.blunder,
-        request.ignore_decided,
-    )
+    config = _config_from(request)
     try:
         report = analysis_service.reanalyze(
             session=db,
@@ -109,6 +126,52 @@ def run_analysis(request: AnalysisRequest, db: Session = Depends(get_db)) -> dic
 
     db.commit()
     return _report_summary(report)
+
+
+EXPORT_FILENAMES = {
+    "json": "chess-mistakes.json",
+    "csv": "chess-mistakes.csv",
+    "jsonl": "chess-mistakes.jsonl",
+}
+
+
+@router.post("/export")
+def export_mistakes(request: ExportRequest, db: Session = Depends(get_db)) -> Response:
+    fmt = request.format.strip().lower()
+    if fmt not in export_service.FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unknown export format {fmt!r}; expected one of "
+                f"{', '.join(export_service.FORMATS)}"
+            ),
+        )
+    try:
+        report = analysis_service.reanalyze(
+            session=db,
+            game_ids=request.game_ids,
+            config=_config_from(request),
+            limit=_limit(request.depth, request.time_limit),
+            engine_path=request.stockfish_path,
+            use_cache=request.use_cache,
+            rebuild_cache=request.rebuild_cache,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    db.commit()
+    return Response(
+        content=export_service.render(report, fmt),
+        media_type=export_service.content_type(fmt),
+        headers={
+            "Content-Disposition": f'attachment; filename="{EXPORT_FILENAMES[fmt]}"',
+            "X-Mistake-Count": str(len(report.get("mistakes") or [])),
+        },
+    )
 
 
 @router.post("/upload")

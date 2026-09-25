@@ -53,7 +53,7 @@ export default function ChessBoard({ fen, orientation = 'white', highlight = [] 
   return (
     <div className="board">
       {ordered.map((entry) => {
-        const isDark = (entry.file + entry.rank) % 2 === 0
+        const isDark = (entry.file + entry.rank) % 2 === 1
         const classes = ['square', isDark ? 'dark' : 'light']
         if (targets.has(entry.square)) classes.push('target')
         return (

@@ -1,0 +1,16 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.env
+data/uploads
+data/analysis
+data/*.db
+data/*.pgn
+!data/sample_games.pgn
+stockfish
+frontend/node_modules
+frontend/dist
+*.log

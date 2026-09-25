@@ -1,0 +1,41 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
+# Cached engine evaluations: large, regenerable, machine-specific.
+data/analysis_cache.json
+
+# Uploaded PGNs and generated analysis artefacts.
+data/uploads/*
+!data/uploads/.gitkeep
+data/analysis/*
+!data/analysis/.gitkeep
+
+# SQLite database and its journals.
+data/*.db
+data/*.db-journal
+data/*.sqlite
+
+# Your own games. Personal data -- keep it out of version control unless you
+# are happy for it to be public. data/sample_games.pgn stays tracked.
+data/games.pgn
+data/*.pgn
+!data/sample_games.pgn
+
+# The engine binary is a build artefact, not source.
+stockfish/*
+!stockfish/.gitkeep
+
+# Node / frontend build output.
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+*.log
+.DS_Store

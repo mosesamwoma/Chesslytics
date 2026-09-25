@@ -1,0 +1,48 @@
+[Event "Sample 1: Scholar's mate"]
+[Site "Chess.com"]
+[Date "2026.01.04"]
+[White "Alice"]
+[Black "Bob"]
+[Result "1-0"]
+[ECO "C20"]
+[Opening "King's Pawn Game"]
+[TimeControl "600"]
+[WhiteElo "1200"]
+[BlackElo "1180"]
+
+1. e4 {[%clk 0:09:58]} e5 {[%clk 0:09:57]} 2. Bc4 {[%clk 0:09:52]} Nc6 {[%clk 0:09:50]}
+3. Qh5 {[%clk 0:09:45]} Nf6 {[%clk 0:09:41]} 4. Qxf7# {[%clk 0:09:38]} 1-0
+
+[Event "Sample 2: Queen lost in bullet"]
+[Site "Chess.com"]
+[Date "2026.01.05"]
+[White "Alice"]
+[Black "Carol"]
+[Result "0-1"]
+[ECO "C20"]
+[Opening "King's Pawn Game"]
+[TimeControl "60"]
+[WhiteElo "1200"]
+[BlackElo "1240"]
+
+1. e4 {[%clk 0:00:58]} e5 {[%clk 0:00:57]} 2. Qh5 {[%clk 0:00:52]} Nc6 {[%clk 0:00:54]}
+3. Qxe5+ {[%clk 0:00:21]} Nxe5 {[%clk 0:00:50]} 4. Nc3 {[%clk 0:00:14]} Nf6 {[%clk 0:00:46]}
+5. d4 {[%clk 0:00:08]} Nc6 {[%clk 0:00:41]} 0-1
+
+[Event "Sample 3: Quiet Ruy Lopez"]
+[Site "Chess.com"]
+[Date "2026.01.06"]
+[White "Alice"]
+[Black "Dave"]
+[Result "1/2-1/2"]
+[ECO "C96"]
+[Opening "Ruy Lopez"]
+[TimeControl "600"]
+[WhiteElo "1200"]
+[BlackElo "1210"]
+
+1. e4 {[%clk 0:09:58]} e5 {[%clk 0:09:57]} 2. Nf3 {[%clk 0:09:55]} Nc6 {[%clk 0:09:54]}
+3. Bb5 {[%clk 0:09:50]} a6 {[%clk 0:09:48]} 4. Ba4 {[%clk 0:09:45]} Nf6 {[%clk 0:09:43]}
+5. O-O {[%clk 0:09:40]} Be7 {[%clk 0:09:38]} 6. Re1 {[%clk 0:09:35]} b5 {[%clk 0:09:30]}
+7. Bb3 {[%clk 0:09:32]} d6 {[%clk 0:09:26]} 8. c3 {[%clk 0:09:28]} O-O {[%clk 0:09:22]}
+9. h3 {[%clk 0:09:24]} Na5 {[%clk 0:09:18]} 10. Bc2 {[%clk 0:09:20]} c5 {[%clk 0:09:14]} 1/2-1/2

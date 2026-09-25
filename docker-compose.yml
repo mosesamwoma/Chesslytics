@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      STOCKFISH_PATH: /usr/bin/stockfish
+      DATABASE_URL: sqlite:////data/chess_mistakes.db
+      UPLOAD_DIR: /data/uploads
+      ANALYSIS_DIR: /data/analysis
+      STOCKFISH_DEPTH: "12"
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"

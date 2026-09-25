@@ -25,6 +25,23 @@ def tally(mistakes: Iterable[dict], key: Callable[[dict], Any]) -> list[dict]:
     ]
 
 
+def tally_many(mistakes: Iterable[dict], key: Callable[[dict], list]) -> list[dict]:
+    counts: Counter = Counter()
+    games: dict[Any, set] = defaultdict(set)
+
+    for mistake in mistakes:
+        for value in key(mistake) or []:
+            if value is None:
+                continue
+            counts[value] += 1
+            games[value].add(mistake["game_id"])
+
+    return [
+        {"key": value, "count": count, "games": len(games[value])}
+        for value, count in counts.most_common()
+    ]
+
+
 def mine_patterns(
     games: dict[str, dict], config: Optional[MinerConfig] = None
 ) -> dict:
@@ -42,6 +59,12 @@ def mine_patterns(
             mistakes,
             lambda item: item["facts"]["hung_piece"]
             and item["facts"]["hung_piece"].get("name", item["facts"]["hung_piece"]["piece"]),
+        ),
+        "motif": tally_many(
+            mistakes,
+            lambda item: [
+                motif["kind"] for motif in (item["facts"].get("motifs_allowed") or [])
+            ],
         ),
     }
 

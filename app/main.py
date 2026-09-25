@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -16,11 +15,10 @@ from app.api import analysis, games, patterns
 from app.chess.engine import SearchLimit
 from app.database.database import init_db, session_scope
 from app.mining.mistake_detector import MinerConfig
-from app.mining.profiler import CATEGORY_LABELS
-from app.services import analysis_service
+from app.mining.profiler import CATEGORY_LABELS, motif_label
+from app.services import analysis_service, export_service
 
 DEFAULT_PGN = os.path.join("data", "games.pgn")
-DEFAULT_CACHE = os.path.join("data", "analysis_cache.json")
 DEFAULT_CORS = "http://localhost:5173,http://127.0.0.1:5173"
 
 
@@ -42,6 +40,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-Mistake-Count"],
 )
 app.include_router(games.router)
 app.include_router(analysis.router)
@@ -78,7 +77,12 @@ def parse_args(argv=None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--pgn", default=DEFAULT_PGN, help="PGN file to read")
-    parser.add_argument("--cache", default=DEFAULT_CACHE, help="analysis cache file")
+    parser.add_argument(
+        "--cache",
+        default=None,
+        help="analysis cache file (default: $ANALYSIS_CACHE, else "
+        "<ANALYSIS_DIR>/eval_cache.json). The web app reads the same file.",
+    )
     parser.add_argument(
         "--depth",
         type=int,
@@ -119,7 +123,18 @@ def parse_args(argv=None) -> argparse.Namespace:
         "(default: 30)",
     )
     parser.add_argument("--stockfish", default=None, help="path to the Stockfish binary")
-    parser.add_argument("--output", default=None, help="write records to a JSON file")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="write the mistake records to a file; the format follows the file "
+        "extension (.json, .csv, .jsonl)",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=export_service.FORMATS,
+        default=None,
+        help="override the format implied by the --output extension",
+    )
     parser.add_argument(
         "--no-cache", action="store_true", help="do not read or write the cache"
     )
@@ -215,6 +230,17 @@ def format_report(report: dict, config: MinerConfig) -> str:
         rendered = ", ".join(f"{row['key']} {row['count']}" for row in severity)
         lines.append(f"By severity: {rendered}")
 
+    motifs = report.get("patterns", {}).get("motif", [])
+    if motifs:
+        lines.append("")
+        lines.append("Tactics handed to the opponent")
+        lines.append("-" * 30)
+        for row in motifs:
+            lines.append(
+                f"  {motif_label(row['key']):<24} {row['count']:>4}  "
+                f"({row['games']} game{'s' if row['games'] != 1 else ''})"
+            )
+
     openings = report.get("recurring", {}).get("opening", [])
     if openings:
         lines.append("")
@@ -300,6 +326,9 @@ def main(argv=None) -> int:
         ignore_decided=not args.include_decided,
     )
 
+    if args.save:
+        init_db()
+
     started = time.monotonic()
     try:
         with (session_scope() if args.save else nullcontext(None)) as session:
@@ -346,9 +375,14 @@ def main(argv=None) -> int:
     print(format_report(report, config))
 
     if args.output:
-        with open(args.output, "w", encoding="utf-8") as handle:
-            json.dump(report, handle, indent=2, default=str)
-        print(f"Wrote {len(report.get('mistakes') or [])} records to {args.output}")
+        try:
+            fmt, written = export_service.write_report(
+                report, args.output, args.output_format
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 5
+        print(f"Wrote {written} records to {args.output} as {fmt}")
 
     return 0
 

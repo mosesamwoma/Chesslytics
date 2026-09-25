@@ -143,7 +143,10 @@ export default function ChessDNA() {
         <div className="card">
           <h2>By severity</h2>
           <CategoryBars
-            rows={profile.severity_breakdown || []}
+            rows={(profile.severity_breakdown || []).map((row) => ({
+              key: row.severity,
+              count: row.count,
+            }))}
             labelFor={titleCase}
             emptyLabel="Nothing recorded yet."
           />

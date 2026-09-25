@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from app.chess.features import newly_hanging
+
 DECIDED_WIN_PCT = 90.0
 MOVE_BUCKETS = [(1, 10), (11, 20), (21, 30), (31, 40), (41, 10_000)]
 
@@ -65,8 +67,36 @@ def player_color(metadata: dict, player: str) -> Optional[str]:
     return None
 
 
+def describe_piece(piece: Optional[dict]) -> str:
+    if not piece:
+        return "piece"
+    return f"{piece.get('name', piece.get('piece', 'piece'))} on {piece.get('square', '?')}"
+
+
+MOTIF_ORDER = ("mate", "fork", "pin", "skewer")
+
+
+def motif_phrase(facts: dict, exclude: tuple = ()) -> str:
+    present = {
+        motif["kind"] for motif in (facts.get("motifs_allowed") or [])
+    }
+    kinds = [kind for kind in MOTIF_ORDER if kind in present and kind not in exclude]
+    if not kinds:
+        return ""
+    if len(kinds) == 1:
+        return f" and hands the opponent a {kinds[0]}"
+    return " and hands the opponent a " + ", a ".join(kinds[:-1]) + f" and a {kinds[-1]}"
+
+
 def categorize(record: dict, config: MinerConfig) -> tuple[str, str]:
     facts = record["facts"]
+    tactics = motif_phrase(facts)
+
+    if facts.get("allows_mate"):
+        return (
+            "allowed_mate",
+            f"this move lets the opponent mate{motif_phrase(facts, exclude=('mate',))}",
+        )
 
     if facts["best_move_was_mate"]:
         return (
@@ -74,12 +104,20 @@ def categorize(record: dict, config: MinerConfig) -> tuple[str, str]:
             "the engine had an immediate checkmate and a different move was played",
         )
 
-    if facts["hangs_piece"]:
+    if facts.get("newly_hanging"):
         piece = facts["hung_piece"]
+        see = piece.get("see_pawns") if piece else None
+        worth = f", worth {see:g} pawns by static exchange" if see else ""
         return (
             "hanging_piece",
-            f"after this move the {piece.get('name', piece['piece'])} on {piece['square']} "
-            f"could be captured by a piece worth less than it",
+            f"this move left the {describe_piece(piece)} en prise{worth}{tactics}",
+        )
+
+    if facts["hangs_piece"]:
+        return (
+            "hanging_piece",
+            f"the {describe_piece(facts['hung_piece'])} was already en prise before "
+            f"this move and still is{tactics}",
         )
 
     if facts["best_move_was_capture"] and not facts["is_capture"]:
@@ -98,7 +136,8 @@ def categorize(record: dict, config: MinerConfig) -> tuple[str, str]:
 
     return (
         record["phase"],
-        f"no more specific cause identified; the move lost ground in the {record['phase']}",
+        f"no more specific cause identified; the move lost ground in the "
+        f"{record['phase']}{tactics}",
     )
 
 
@@ -163,7 +202,14 @@ def build_records(games: dict[str, dict], config: MinerConfig) -> tuple[list[dic
                 context["excluded_decided"] += 1
                 continue
 
-            hanging = move.get("hanging_after") or []
+            hanging_after = move.get("hanging_after") or []
+            hanging_was = move.get("hanging_before") or []
+            hanging_new = newly_hanging(hanging_was, hanging_after)
+            motifs_allowed = move.get("motifs_allowed") or []
+            mate_after = move.get("eval_after_mate")
+            allows_mate = any(
+                motif["kind"] == "mate" for motif in motifs_allowed
+            ) or (mate_after is not None and mate_after < 0)
             clock_before = move.get("clock_before")
 
             record = {
@@ -194,8 +240,14 @@ def build_records(games: dict[str, dict], config: MinerConfig) -> tuple[list[dic
                     "is_mate": move.get("is_mate", False),
                     "is_promotion": move.get("is_promotion", False),
                     "is_castling": move.get("is_castling", False),
-                    "hangs_piece": bool(hanging),
-                    "hung_piece": hanging[0] if hanging else None,
+                    "hangs_piece": bool(hanging_after),
+                    "hung_piece": (hanging_new or hanging_after or [None])[0],
+                    "newly_hanging": hanging_new,
+                    "hanging_before": hanging_was,
+                    "hanging_after": hanging_after,
+                    "motifs_allowed": motifs_allowed,
+                    "motifs_before": move.get("motifs_before") or [],
+                    "allows_mate": allows_mate,
                     "best_move_was_capture": move.get("best_move_was_capture", False),
                     "best_move_was_check": move.get("best_move_was_check", False),
                     "best_move_was_mate": move.get("best_move_was_mate", False),

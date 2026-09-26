@@ -33,7 +33,7 @@ def cors_origins() -> list[str]:
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
-app = FastAPI(title="Chess Mistakes Miner", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Chesslytics", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins(),
@@ -50,7 +50,7 @@ app.include_router(training.router)
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "service": "chess-mistakes-miner"}
+    return {"status": "ok", "service": "chesslytics"}
 
 
 def mount_frontend() -> None:
@@ -64,7 +64,7 @@ mount_frontend()
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="chess-mistakes-miner",
+        prog="chesslytics",
         description=(
             "Analyze many completed chess games and mine the mistakes you repeat."
         ),
@@ -199,8 +199,8 @@ def format_report(report: dict, config: MinerConfig) -> str:
     profile = report.get("profile") or {}
 
     lines.append("")
-    lines.append("Chess Mistakes Miner")
-    lines.append("=" * 20)
+    lines.append("Chesslytics")
+    lines.append("=" * 11)
     lines.append("")
     lines.append(f"Engine: {report.get('engine')}  |  search: {describe_limit(report.get('limit'))}")
     workers = report.get("workers") or 1

@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 from app.chess.motifs import summarise
 

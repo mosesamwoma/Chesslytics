@@ -164,7 +164,7 @@ run the sample data.
 | --- | --- | --- |
 | `STOCKFISH_PATH` | auto-detected | Stockfish binary path |
 | `STOCKFISH_DEPTH` / `STOCKFISH_TIME` | `12` / — | Default search limit |
-| `DATABASE_URL` | `sqlite:///./data/chess_mistakes.db` | SQLAlchemy URL |
+| `DATABASE_URL` | `sqlite:///./data/Chesslytics.db` | SQLAlchemy URL |
 | `UPLOAD_DIR` / `ANALYSIS_DIR` | `data/uploads` / `data/analysis` | Storage locations |
 | `ANALYSIS_CACHE` / `VERIFY_CACHE` | derived from `ANALYSIS_DIR` | Explicit cache paths |
 | `PARALLEL_WORKERS` | `1` | Default for `--workers` |

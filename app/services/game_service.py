@@ -282,8 +282,11 @@ def mistake_to_dict(mistake: Mistake) -> dict:
         "player": mistake.player,
         "opponent": mistake.opponent,
         "played_move": mistake.played_move,
+        "played_uci": mistake.played_uci,
         "best_move": mistake.best_move,
+        "best_move_uci": mistake.best_move_uci,
         "fen": mistake.fen,
+        "fen_after": mistake.fen_after,
         "eval_before": mistake.eval_before,
         "eval_after": mistake.eval_after,
         "loss": mistake.loss,
@@ -298,6 +301,11 @@ def mistake_to_dict(mistake: Mistake) -> dict:
         "in_time_pressure": mistake.in_time_pressure,
         "time_remaining": mistake.time_remaining,
         "game_decided": mistake.game_decided,
+        "in_book": mistake.in_book,
+        "book_move": mistake.book_move,
+        "verified_by": mistake.verified_by,
+        "verified_loss": mistake.verified_loss,
+        "agreed": mistake.agreed,
         "facts": mistake.facts,
     }
 

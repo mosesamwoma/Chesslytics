@@ -4,7 +4,7 @@ from typing import Optional
 
 import chess
 
-from app.chess.pieces import PIECE_NAMES, SEE_VALUES, see_value
+from app.chess.pieces import PIECE_NAMES, see_value
 from app.chess.see import best_exchange
 
 DIRECTIONS = {
@@ -67,7 +67,6 @@ def mate_threats(board: chess.Board) -> list[dict]:
 
 def forks(board: chess.Board) -> list[dict]:
     found = []
-    mover = board.turn
 
     for move in board.legal_moves:
         board.push(move)

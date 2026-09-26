@@ -5,6 +5,7 @@ const LINKS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/games', label: 'Games' },
   { to: '/patterns', label: 'Patterns' },
+  { to: '/training', label: 'Training' },
   { to: '/dna', label: 'Chess DNA' },
 ]
 
@@ -37,7 +38,7 @@ export default function NavBar() {
 
   return (
     <nav className="nav">
-      <span className="nav-brand">Chess Mistakes Miner</span>
+      <span className="nav-brand">Chesslytics</span>
       <div className="nav-links">
         {LINKS.map((link) => (
           <NavLink

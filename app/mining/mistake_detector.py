@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import chess
+
+from app.chess.book import BookReader
 from app.chess.features import newly_hanging
 
 DECIDED_WIN_PCT = 90.0
@@ -19,6 +22,8 @@ class MinerConfig:
     mistake: float = 1.0
     blunder: float = 2.0
     ignore_decided: bool = True
+    book: Optional[str] = None
+    exclude_book: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -30,6 +35,8 @@ class MinerConfig:
             "mistake": self.mistake,
             "blunder": self.blunder,
             "ignore_decided": self.ignore_decided,
+            "book": self.book,
+            "exclude_book": self.exclude_book,
         }
 
 
@@ -141,18 +148,50 @@ def categorize(record: dict, config: MinerConfig) -> tuple[str, str]:
     )
 
 
-def build_records(games: dict[str, dict], config: MinerConfig) -> tuple[list[dict], dict]:
+def book_facts(reader: Optional[BookReader], fen: Optional[str]) -> tuple[Optional[bool], Optional[str]]:
+    if reader is None or not fen:
+        return None, None
+    try:
+        board = chess.Board(fen)
+    except ValueError:
+        return None, None
+    if board.is_game_over():
+        return False, None
+    move = reader.move_for(board)
+    if move is None:
+        return False, None
+    try:
+        return True, board.san(move)
+    except Exception:
+        return True, None
+
+
+def build_records(
+    games: dict[str, dict],
+    config: MinerConfig,
+    reader: Optional[BookReader] = None,
+) -> tuple[list[dict], dict]:
     mistakes: list[dict] = []
     context: dict[str, Any] = {
         "games_analyzed": 0,
         "games_matched_player": 0,
         "games_with_clock": 0,
+        "games_with_book": 0,
         "moves_scored": 0,
         "moves_failed": 0,
+        "book_positions": 0,
+        "moves_in_book": 0,
         "excluded_decided": 0,
         "excluded_not_played_by_color": 0,
+        "excluded_book": 0,
+        "mistakes_in_book": 0,
+        "book_depths": [],
+        "book": None,
         "player_not_found": False,
     }
+
+    if reader is not None:
+        context["book"] = reader.name
 
     player_wanted = bool(config.player)
 
@@ -172,6 +211,7 @@ def build_records(games: dict[str, dict], config: MinerConfig) -> tuple[list[dic
             context["games_matched_player"] += 1
 
         opening = metadata.get("opening") or metadata.get("eco") or None
+        book_plies: list[int] = []
 
         for move in moves:
             if move.get("error"):
@@ -188,6 +228,13 @@ def build_records(games: dict[str, dict], config: MinerConfig) -> tuple[list[dic
             if player_wanted and move["color"] != played_color:
                 context["excluded_not_played_by_color"] += 1
                 continue
+
+            in_book, book_move = book_facts(reader, move.get("fen_before"))
+            if reader is not None:
+                context["book_positions"] += 1
+                if in_book:
+                    context["moves_in_book"] += 1
+                    book_plies.append(move["ply"])
 
             loss_cp = move["loss_cp"]
             loss_pawns = max(loss_cp, 0) / 100.0
@@ -219,7 +266,9 @@ def build_records(games: dict[str, dict], config: MinerConfig) -> tuple[list[dic
                 "ply": move["ply"],
                 "color": move["color"],
                 "played_move": move["san"],
+                "played_uci": move.get("uci"),
                 "best_move": move.get("best_move_san") or move.get("best_move_uci"),
+                "best_move_uci": move.get("best_move_uci"),
                 "eval_before": round(move["eval_before_cp"] / 100.0, 2),
                 "eval_after": round(move["eval_after_cp"] / 100.0, 2),
                 "loss": round(loss_pawns, 2),
@@ -229,8 +278,11 @@ def build_records(games: dict[str, dict], config: MinerConfig) -> tuple[list[dic
                 "winpct_loss": round(win_before - win_after, 1),
                 "severity": severity_for(loss_pawns, config),
                 "fen": move["fen_before"],
+                "fen_after": move.get("fen_after"),
                 "phase": move["phase"],
                 "opening": opening,
+                "in_book": in_book,
+                "book_move": book_move,
                 "game_decided": decided,
                 "mate_before": move.get("eval_before_mate"),
                 "mate_after": move.get("eval_after_mate"),
@@ -269,10 +321,20 @@ def build_records(games: dict[str, dict], config: MinerConfig) -> tuple[list[dic
                 ),
             }
             record["category"], record["category_basis"] = categorize(record, config)
+            if config.exclude_book and in_book:
+                context["excluded_book"] += 1
+                continue
             mistakes.append(record)
+
+        if book_plies:
+            context["games_with_book"] += 1
+            context["book_depths"].append(max(book_plies))
 
     if player_wanted and context["games_matched_player"] == 0:
         context["player_not_found"] = True
 
+    context["mistakes_in_book"] = sum(
+        1 for mistake in mistakes if mistake["in_book"]
+    )
     mistakes.sort(key=lambda item: -item["loss_cp"])
     return mistakes, context

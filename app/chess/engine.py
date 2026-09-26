@@ -73,14 +73,32 @@ def find_stockfish(explicit: Optional[str] = None) -> str:
 
 
 class ChessEngine:
-    def __init__(self, path: str, limit: SearchLimit) -> None:
+    def __init__(
+        self, path: str, limit: SearchLimit, threads: Optional[int] = None
+    ) -> None:
         self.path = path
         self.limit = limit
+        self.threads = threads
         self._engine: Optional[chess.engine.SimpleEngine] = None
 
     def start(self) -> ChessEngine:
         self._engine = chess.engine.SimpleEngine.popen_uci(self.path)
+        if self.threads is not None:
+            self.configure({"Threads": self.threads})
         return self
+
+    def configure(self, options: dict) -> dict:
+        if self._engine is None:
+            raise RuntimeError("engine is not running")
+        supported = {name.lower(): name for name in self._engine.options}
+        wanted = {
+            supported[key.lower()]: value
+            for key, value in options.items()
+            if key.lower() in supported
+        }
+        if wanted:
+            self._engine.configure(wanted)
+        return wanted
 
     def close(self) -> None:
         if self._engine is not None:

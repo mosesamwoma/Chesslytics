@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DEFAULT_DATABASE_URL = "sqlite:///./data/chess_mistakes.db"
@@ -86,7 +86,41 @@ def get_db() -> Iterator[Session]:
         session.close()
 
 
+def ensure_columns() -> list[str]:
+    from app.database.models import Base as ModelBase
+
+    engine = get_engine()
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    added: list[str] = []
+
+    for table in ModelBase.metadata.sorted_tables:
+        if table.name not in tables:
+            continue
+        present = {column["name"] for column in inspector.get_columns(table.name)}
+        missing = [
+            column
+            for column in table.columns
+            if column.name not in present and not column.primary_key
+        ]
+        if not missing:
+            continue
+        with engine.begin() as connection:
+            for column in missing:
+                kind = column.type.compile(engine.dialect)
+                connection.execute(
+                    text(
+                        f'ALTER TABLE "{table.name}" '
+                        f'ADD COLUMN "{column.name}" {kind}'
+                    )
+                )
+                added.append(f"{table.name}.{column.name}")
+
+    return added
+
+
 def init_db() -> None:
     from app.database.models import Base as ModelBase
 
     ModelBase.metadata.create_all(bind=get_engine())
+    ensure_columns()

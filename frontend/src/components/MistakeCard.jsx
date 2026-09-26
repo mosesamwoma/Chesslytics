@@ -55,6 +55,16 @@ export default function MistakeCard({ mistake, onSelect, selected }) {
         {clock ? <span>Clock {clock}</span> : null}
         {mistake.in_time_pressure ? <span className="badge">time pressure</span> : null}
         {mistake.game_decided ? <span className="badge">decided position</span> : null}
+        {mistake.in_book ? (
+          <span className="badge" title={mistake.book_move ? `Book move: ${mistake.book_move}` : undefined}>
+            still theory
+          </span>
+        ) : null}
+        {mistake.agreed === false ? (
+          <span className="badge" title={`${mistake.verified_by || 'the verifier'} measured ${Number(mistake.verified_loss).toFixed(2)} pawns`}>
+            disputed
+          </span>
+        ) : null}
         {motifs.map((motif) => (
           <span className="badge" key={`${motif.kind}-${motif.detail || ''}`}>
             {motifLabel(motif.kind)}

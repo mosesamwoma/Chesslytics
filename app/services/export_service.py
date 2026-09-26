@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 from app.chess.motifs import summarise
 
@@ -38,6 +38,13 @@ MISTAKE_COLUMNS = [
     "hung_piece_square",
     "hung_piece_see",
     "fen",
+    "played_uci",
+    "best_move_uci",
+    "in_book",
+    "book_move",
+    "agreed",
+    "verified_loss",
+    "verified_by",
 ]
 
 
@@ -82,6 +89,13 @@ def mistake_row(record: dict) -> dict:
         "hung_piece_square": hung.get("square"),
         "hung_piece_see": hung.get("see_pawns"),
         "fen": record.get("fen"),
+        "played_uci": record.get("played_uci"),
+        "best_move_uci": record.get("best_move_uci"),
+        "in_book": record.get("in_book"),
+        "book_move": record.get("book_move"),
+        "agreed": record.get("agreed"),
+        "verified_loss": record.get("verified_loss"),
+        "verified_by": record.get("verified_by"),
     }
 
 

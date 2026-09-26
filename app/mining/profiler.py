@@ -127,6 +127,68 @@ def _average_loss_by_phase(mistakes: list[dict]) -> list[dict]:
     ]
 
 
+def book_observations(report: dict) -> list[str]:
+    book = report.get("book") or {}
+    if not book.get("path"):
+        return []
+
+    observations: list[str] = []
+    positions = book.get("positions") or 0
+    in_book = book.get("in_book") or 0
+    mistakes_in_book = book.get("mistakes_in_book") or 0
+    total = len(report.get("mistakes") or [])
+
+    if positions:
+        share = 100.0 * in_book / positions
+        observations.append(
+            f"The opening book held a move in {in_book} of {positions} positions examined "
+            f"({share:.0f}%)."
+        )
+
+    if mistakes_in_book and total:
+        share = 100.0 * mistakes_in_book / total
+        observations.append(
+            f"{mistakes_in_book} mistakes ({share:.0f}%) were played while the book still "
+            f"held a move, so the position was still theory at that point."
+        )
+
+    if book.get("median_book_move"):
+        observations.append(
+            f"The book ran out at a median of move {book['median_book_move']} across "
+            f"{book.get('games_following_book', 0)} games that reached it."
+        )
+
+    excluded = book.get("excluded") or 0
+    if excluded:
+        observations.append(
+            f"{excluded} mistakes played while still in book were excluded from every count "
+            f"above, because the book move is a known line rather than a decision."
+        )
+
+    return observations
+
+
+def verify_observations(report: dict) -> list[str]:
+    verify = report.get("verify") or {}
+    verified = verify.get("verified") or 0
+    if not verified:
+        return []
+
+    agreed = verify.get("agreed") or 0
+    disputed = verify.get("disputed") or 0
+    observations = [
+        f"A second engine ({verify.get('engine')}) independently judged {agreed} of "
+        f"{verified} mistakes to be losses of at least the minimum threshold "
+        f"({verify.get('agreement')}% agreement); {disputed} were disputed."
+    ]
+    if verify.get("unverified"):
+        observations.append(
+            f"{verify['unverified']} mistakes could not be re-checked because their position "
+            f"was not stored."
+        )
+    return observations
+
+
 def build_observations(report: dict) -> list[str]:
     mistakes = report["mistakes"]
     context = report["context"]
@@ -181,5 +243,8 @@ def build_observations(report: dict) -> list[str]:
             f"{context['moves_failed']} positions could not be evaluated and are not "
             f"represented here."
         )
+
+    observations.extend(book_observations(report))
+    observations.extend(verify_observations(report))
 
     return observations

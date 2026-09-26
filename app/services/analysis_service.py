@@ -11,8 +11,15 @@ import chess.pgn
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.chess.book import open_book
 from app.chess.engine import ChessEngine, SearchLimit, find_stockfish
-from app.chess.evaluator import analyze_games
+from app.chess.evaluator import (
+    MATE_SCORE_CP,
+    analyze_games,
+    analyze_games_parallel,
+    clamp_loss,
+    score_to_cp,
+)
 from app.chess.pgn_parser import load_games, parse_pgn
 from app.database.models import Game, Mistake, Pattern, PlayerProfile
 from app.mining.mistake_detector import MinerConfig
@@ -22,6 +29,7 @@ from app.services import game_service
 
 SCHEMA_VERSION = 1
 DEFAULT_DEPTH = 12
+DEFAULT_WORKERS = 1
 
 
 def analysis_dir() -> Path:
@@ -99,6 +107,9 @@ def analyze_source(
     persist: bool = True,
     source: Optional[str] = None,
     cache_path: Optional[str] = None,
+    book: Optional[str] = None,
+    workers: int = DEFAULT_WORKERS,
+    verify_with: Optional[str] = None,
 ) -> dict:
     if text is not None:
         games, errors = parse_pgn(text)
@@ -116,6 +127,7 @@ def analyze_source(
             "patterns": {},
             "recurring": {},
             "context": {},
+            "book": {},
             "config": (config or MinerConfig()).as_dict(),
             "profile": {},
         }
@@ -134,9 +146,162 @@ def analyze_source(
         progress=progress,
         persist=persist,
         cache_path=cache_path,
+        book=book,
+        workers=workers,
+        verify_with=verify_with,
     )
     report["errors"] = errors
     return report
+
+
+def verify_cache_file() -> Path:
+    override = os.environ.get("VERIFY_CACHE")
+    if override:
+        return Path(override).expanduser()
+    return analysis_dir() / "verify_cache.json"
+
+
+def load_verify_cache() -> dict:
+    path = verify_cache_file()
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_verify_cache(entries: dict) -> Path:
+    path = verify_cache_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "meta": {
+            "schema_version": SCHEMA_VERSION,
+            "created": datetime.now(timezone.utc).isoformat(),
+        },
+        "positions": entries,
+    }
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    temporary.replace(path)
+    return path
+
+
+def position_score(
+    engine: ChessEngine,
+    board: chess.Board,
+    entries: dict,
+    engine_name: str,
+    limit: SearchLimit,
+) -> int:
+    if board.is_checkmate():
+        return -MATE_SCORE_CP
+    if board.is_game_over():
+        return 0
+
+    key = f"{engine_name}|{limit.kind}:{limit.value}|{board.fen()}"
+    hit = entries.get(key)
+    if hit is not None:
+        return int(hit)
+
+    info = engine.analyse(board, limit.to_engine_limit())
+    cp, _mate = score_to_cp(info["score"], board.turn)
+    entries[key] = cp
+    return cp
+
+
+def after_position(mistake: dict) -> Optional[chess.Board]:
+    fen_after = mistake.get("fen_after")
+    if fen_after:
+        try:
+            return chess.Board(fen_after)
+        except ValueError:
+            return None
+    fen = mistake.get("fen")
+    if not fen:
+        return None
+    try:
+        board = chess.Board(fen)
+    except ValueError:
+        return None
+    move = None
+    if mistake.get("played_uci"):
+        try:
+            move = chess.Move.from_uci(mistake["played_uci"])
+        except ValueError:
+            move = None
+    if move is None and mistake.get("played_move"):
+        try:
+            move = board.parse_san(mistake["played_move"])
+        except ValueError:
+            return None
+    if move is None or move not in board.legal_moves:
+        return None
+    board.push(move)
+    return board
+
+
+def verify_mistakes(
+    mistakes: list[dict],
+    engine_path: str,
+    limit: SearchLimit,
+    notify=None,
+    min_loss: float = 1.0,
+) -> dict:
+    notify = notify or (lambda _message: None)
+    entries = load_verify_cache()
+    agreed = 0
+    disputed = 0
+    unverified = 0
+    engine_name = "unknown"
+
+    with ChessEngine(find_stockfish(engine_path), limit) as engine:
+        engine_name = engine.name
+        for index, mistake in enumerate(mistakes, start=1):
+            fen = mistake.get("fen")
+            board = after_position(mistake)
+            if not fen or board is None:
+                unverified += 1
+                continue
+
+            try:
+                before = chess.Board(fen)
+            except ValueError:
+                unverified += 1
+                continue
+            if before.is_game_over():
+                unverified += 1
+                continue
+
+            notify(f"[{index}/{len(mistakes)}] verifying move {mistake.get('move_number')}")
+            cp_before = position_score(engine, before, entries, engine_name, limit)
+            cp_after = position_score(engine, board, entries, engine_name, limit)
+            loss_cp = clamp_loss(cp_before + cp_after)
+            loss_pawns = round(max(loss_cp, 0) / 100.0, 2)
+
+            mistake["verified_by"] = engine_name
+            mistake["verified_loss"] = loss_pawns
+            mistake["agreed"] = loss_pawns >= min_loss
+            if mistake["agreed"]:
+                agreed += 1
+            else:
+                disputed += 1
+
+    save_verify_cache(entries)
+    total = agreed + disputed
+
+    return {
+        "engine": engine_name,
+        "limit": limit.as_key(),
+        "verified": total,
+        "agreed": agreed,
+        "disputed": disputed,
+        "unverified": unverified,
+        "agreement": round(100.0 * agreed / total, 1) if total else None,
+    }
 
 
 def analyze_games_objects(
@@ -150,33 +315,64 @@ def analyze_games_objects(
     progress=None,
     persist: bool = True,
     cache_path: Optional[str] = None,
+    book: Optional[str] = None,
+    workers: int = DEFAULT_WORKERS,
+    verify_with: Optional[str] = None,
 ) -> dict:
     games = games or []
     config = config or MinerConfig()
     limit = limit or default_limit()
     notify = progress or (lambda _message: None)
+    binary = find_stockfish(engine_path)
 
-    engine = ChessEngine(find_stockfish(engine_path), limit)
-
-    with engine:
-        engine_name = engine.name
+    # Open (and validate) the opening book before running any engine
+    # analysis. Both python-chess's polyglot reader and the engine search
+    # can be slow, so a bad --book path should fail fast rather than only
+    # surfacing after minutes of Stockfish analysis have already run.
+    chosen_book = book or config.book
+    reader = open_book(chosen_book)
+    try:
         cached = {} if (rebuild_cache or not use_cache) else load_cache(cache_path)
-        if cached and not cache_is_compatible(cached, engine_name, limit):
-            notify("cache was built with a different engine or search limit; re-analyzing")
-            cached = {}
 
-        results, counts = analyze_games(games, engine, limit, cached, notify)
+        if workers > 1 and len(games) > 1:
+            probe = ChessEngine(binary, limit)
+            with probe:
+                engine_name = probe.name
+            if cached and not cache_is_compatible(cached, engine_name, limit):
+                notify("cache was built with a different engine or search limit; re-analyzing")
+                cached = {}
+            results, counts = analyze_games_parallel(
+                games, binary, limit, cached, notify, workers
+            )
+        else:
+            engine = ChessEngine(binary, limit)
+            with engine:
+                engine_name = engine.name
+                if cached and not cache_is_compatible(cached, engine_name, limit):
+                    notify("cache was built with a different engine or search limit; re-analyzing")
+                    cached = {}
+                results, counts = analyze_games(games, engine, limit, cached, notify)
 
         if use_cache:
             merged = dict(cached.get("games") or {})
             merged.update(results)
             save_cache(merged, engine_name, limit, cache_path)
 
-    report = mine_patterns(results, config)
+        report = mine_patterns(results, config, reader)
+    finally:
+        if reader is not None:
+            reader.close()
+
+    if verify_with:
+        report["verify"] = verify_mistakes(
+            report["mistakes"], verify_with, limit, notify, config.min_loss
+        )
+
     report["profile"] = build_profile(report)
     report["engine"] = engine_name
     report["limit"] = limit.as_key()
     report["counts"] = counts
+    report["workers"] = max(1, workers)
     report["games"] = len(games)
     report["analyzed_games"] = len(results)
 
@@ -211,6 +407,9 @@ def reanalyze(
     use_cache: bool = True,
     rebuild_cache: bool = False,
     progress=None,
+    book: Optional[str] = None,
+    workers: int = DEFAULT_WORKERS,
+    verify_with: Optional[str] = None,
 ) -> dict:
     statement = select(Game)
     if game_ids:
@@ -229,6 +428,9 @@ def reanalyze(
         rebuild_cache=rebuild_cache,
         progress=progress,
         persist=True,
+        book=book,
+        workers=workers,
+        verify_with=verify_with,
     )
 
 
@@ -304,8 +506,11 @@ def _mistake_row(game_id: int, record: dict) -> Mistake:
         player=record.get("player"),
         opponent=record.get("opponent"),
         played_move=record.get("played_move"),
+        played_uci=record.get("played_uci"),
         best_move=record.get("best_move"),
+        best_move_uci=record.get("best_move_uci"),
         fen=record.get("fen"),
+        fen_after=record.get("fen_after"),
         eval_before=record.get("eval_before") or 0.0,
         eval_after=record.get("eval_after") or 0.0,
         loss=record.get("loss") or 0.0,
@@ -320,6 +525,11 @@ def _mistake_row(game_id: int, record: dict) -> Mistake:
         in_time_pressure=bool(record.get("in_time_pressure")),
         time_remaining=record.get("time_remaining"),
         game_decided=bool(record.get("game_decided")),
+        book_move=record.get("book_move"),
+        in_book=record.get("in_book"),
+        verified_by=record.get("verified_by"),
+        verified_loss=record.get("verified_loss"),
+        agreed=record.get("agreed"),
         facts=record.get("facts"),
     )
 

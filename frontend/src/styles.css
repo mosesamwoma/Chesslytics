@@ -597,6 +597,58 @@ select {
   box-shadow: inset 0 0 0 3px var(--series-2);
 }
 
+.board.interactive .square {
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.board.interactive .square:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: -2px;
+}
+
+.square.selected {
+  box-shadow: inset 0 0 0 3px var(--series-1);
+}
+
+.square.reachable::after {
+  content: '';
+  position: absolute;
+  width: 26%;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  background: var(--series-1);
+  opacity: 0.42;
+}
+
+.square.reachable:has(.piece-white, .piece-black)::after {
+  width: 82%;
+  background: transparent;
+  box-shadow: inset 0 0 0 3px var(--series-1);
+  opacity: 0.55;
+}
+
+.square.recent {
+  box-shadow: inset 0 0 0 3px var(--series-3);
+}
+
+.square.selected.recent,
+.square.selected.target {
+  box-shadow: inset 0 0 0 3px var(--series-1);
+}
+
+.card.good {
+  border-color: var(--status-good);
+}
+
+.card.bad {
+  border-color: var(--status-critical);
+}
+
 .square.coord {
   font-size: 10px;
   color: rgba(11, 11, 11, 0.55);

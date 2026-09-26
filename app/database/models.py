@@ -111,8 +111,11 @@ class Mistake(Base):
     player: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     opponent: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     played_move: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    played_uci: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     best_move: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    best_move_uci: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     fen: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fen_after: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     eval_before: Mapped[float] = mapped_column(Float, default=0.0)
     eval_after: Mapped[float] = mapped_column(Float, default=0.0)
     loss: Mapped[float] = mapped_column(Float, index=True)
@@ -127,10 +130,38 @@ class Mistake(Base):
     in_time_pressure: Mapped[bool] = mapped_column(Boolean, default=False)
     time_remaining: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     game_decided: Mapped[bool] = mapped_column(Boolean, default=False)
+    book_move: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    in_book: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    verified_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    verified_loss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    agreed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     facts: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     game: Mapped["Game"] = relationship(back_populates="mistakes")
+    attempts: Mapped[list["PuzzleAttempt"]] = relationship(
+        back_populates="mistake", cascade="all, delete-orphan"
+    )
+
+
+class PuzzleAttempt(Base):
+    __tablename__ = "puzzle_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mistake_id: Mapped[int] = mapped_column(
+        ForeignKey("mistakes.id", ondelete="CASCADE"), index=True
+    )
+    player: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    played_uci: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    played_san: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    correct: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    verdict: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    loss_vs_best: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    graded_by: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    engine: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    mistake: Mapped["Mistake"] = relationship(back_populates="attempts")
 
 
 class PlayerProfile(Base):

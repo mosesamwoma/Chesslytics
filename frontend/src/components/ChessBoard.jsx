@@ -45,30 +45,52 @@ export function squareFromUci(uci) {
   return uci.slice(2, 4)
 }
 
-export default function ChessBoard({ fen, orientation = 'white', highlight = [] }) {
+export function sourceFromUci(uci) {
+  if (!uci || uci.length < 4) return null
+  return uci.slice(0, 2)
+}
+
+export default function ChessBoard({
+  fen,
+  orientation = 'white',
+  highlight = [],
+  selected = null,
+  targets = [],
+  lastMove = null,
+  onSquareClick,
+}) {
   const squares = parseFen(fen)
   const ordered = orientation === 'black' ? [...squares].reverse() : squares
-  const targets = new Set(highlight.filter(Boolean))
+  const marked = new Set(highlight.filter(Boolean))
+  const reachable = new Set(targets.filter(Boolean))
+  const recent = new Set([sourceFromUci(lastMove), squareFromUci(lastMove)].filter(Boolean))
+  const interactive = typeof onSquareClick === 'function'
+  const Element = interactive ? 'button' : 'div'
 
   return (
-    <div className="board">
+    <div className={interactive ? 'board interactive' : 'board'}>
       {ordered.map((entry) => {
         const isDark = (entry.file + entry.rank) % 2 === 1
         const classes = ['square', isDark ? 'dark' : 'light']
-        if (targets.has(entry.square)) classes.push('target')
+        if (marked.has(entry.square)) classes.push('target')
+        if (entry.square === selected) classes.push('selected')
+        if (reachable.has(entry.square)) classes.push('reachable')
+        if (recent.has(entry.square)) classes.push('recent')
         return (
-          <div
+          <Element
             key={entry.square}
+            type={interactive ? 'button' : undefined}
             className={classes.join(' ')}
             title={entry.square}
             aria-label={entry.piece ? `${entry.square} ${entry.piece.type}` : entry.square}
+            onClick={interactive ? () => onSquareClick(entry.square) : undefined}
           >
             {entry.piece ? (
               <span className={entry.piece.isWhite ? 'piece-white' : 'piece-black'}>
                 {GLYPHS[entry.piece.type]}
               </span>
             ) : null}
-          </div>
+          </Element>
         )
       })}
     </div>

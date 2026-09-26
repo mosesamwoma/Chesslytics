@@ -1,4 +1,4 @@
-# ♟️ Chess Mistakes Miner
+# Chess Mistakes Miner
 
 **Stop reviewing games one at a time. Start finding the mistake you keep making.**
 
@@ -6,7 +6,6 @@ Chess Mistakes Miner ingests your PGN games, evaluates every move with Stockfish
 the results for **recurring** weaknesses — not "you blundered on move 23," but "you hang
 pieces in the middlegame under time pressure, four games running." Stockfish tells you what
 happened in one game. This tool tells you what keeps happening across all of them.
-
 
 ---
 
@@ -80,22 +79,6 @@ than silently falling back — run `which stockfish` and confirm before setting 
 Opening books are optional and need no extra install; standard Polyglot `.bin` files
 (exportable from most chess GUIs) work out of the box via `--book`.
 
-### Web app
-
-```bash
-uvicorn app.main:app --reload              # http://127.0.0.1:8000
-cd frontend && npm install && npm run dev  # http://127.0.0.1:5173
-```
-
-### Docker
-
-```bash
-docker compose up --build
-```
-
-Backend on `:8000`, frontend on `:8080` via nginx. `./data` is mounted so the database,
-uploads, and cache survive rebuilds.
-
 ## Usage
 
 ### CLI
@@ -123,9 +106,29 @@ with yours.
 
 ### Web App
 
+Run the backend and frontend in two terminals:
+
+```bash
+uvicorn app.main:app --reload              # http://127.0.0.1:8000
+cd frontend && npm install && npm run dev  # http://127.0.0.1:5173
+```
+
 Five pages: **Dashboard** (aggregate stats), **Games** (upload/manage), **Game Analysis**
 (win-probability chart + step-through board), **Training** (puzzle drills), **Chess DNA**
 (your mistake profile).
+
+For a single-server deployment, build the frontend (`npm run build`) and point
+`FRONTEND_DIST` at `frontend/dist` — FastAPI will serve it directly, no separate dev server
+needed.
+
+### Docker
+
+```bash
+docker compose up --build
+```
+
+Backend on `:8000`, frontend on `:8080` via nginx. `./data` is mounted so the database,
+uploads, and cache survive rebuilds.
 
 ### Training Mode
 

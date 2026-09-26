@@ -38,7 +38,7 @@ export default function NavBar() {
 
   return (
     <nav className="nav">
-      <span className="nav-brand">Chess Mistakes Miner</span>
+      <span className="nav-brand">Chesslytics</span>
       <div className="nav-links">
         {LINKS.map((link) => (
           <NavLink

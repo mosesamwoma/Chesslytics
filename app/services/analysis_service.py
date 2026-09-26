@@ -11,7 +11,7 @@ import chess.pgn
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.chess.book import BookUnavailable, open_book
+from app.chess.book import open_book
 from app.chess.engine import ChessEngine, SearchLimit, find_stockfish
 from app.chess.evaluator import (
     MATE_SCORE_CP,
@@ -325,35 +325,39 @@ def analyze_games_objects(
     notify = progress or (lambda _message: None)
     binary = find_stockfish(engine_path)
 
-    cached = {} if (rebuild_cache or not use_cache) else load_cache(cache_path)
-
-    if workers > 1 and len(games) > 1:
-        probe = ChessEngine(binary, limit)
-        with probe:
-            engine_name = probe.name
-        if cached and not cache_is_compatible(cached, engine_name, limit):
-            notify("cache was built with a different engine or search limit; re-analyzing")
-            cached = {}
-        results, counts = analyze_games_parallel(
-            games, binary, limit, cached, notify, workers
-        )
-    else:
-        engine = ChessEngine(binary, limit)
-        with engine:
-            engine_name = engine.name
-            if cached and not cache_is_compatible(cached, engine_name, limit):
-                notify("cache was built with a different engine or search limit; re-analyzing")
-                cached = {}
-            results, counts = analyze_games(games, engine, limit, cached, notify)
-
-    if use_cache:
-        merged = dict(cached.get("games") or {})
-        merged.update(results)
-        save_cache(merged, engine_name, limit, cache_path)
-
+    # Open (and validate) the opening book before running any engine
+    # analysis. Both python-chess's polyglot reader and the engine search
+    # can be slow, so a bad --book path should fail fast rather than only
+    # surfacing after minutes of Stockfish analysis have already run.
     chosen_book = book or config.book
     reader = open_book(chosen_book)
     try:
+        cached = {} if (rebuild_cache or not use_cache) else load_cache(cache_path)
+
+        if workers > 1 and len(games) > 1:
+            probe = ChessEngine(binary, limit)
+            with probe:
+                engine_name = probe.name
+            if cached and not cache_is_compatible(cached, engine_name, limit):
+                notify("cache was built with a different engine or search limit; re-analyzing")
+                cached = {}
+            results, counts = analyze_games_parallel(
+                games, binary, limit, cached, notify, workers
+            )
+        else:
+            engine = ChessEngine(binary, limit)
+            with engine:
+                engine_name = engine.name
+                if cached and not cache_is_compatible(cached, engine_name, limit):
+                    notify("cache was built with a different engine or search limit; re-analyzing")
+                    cached = {}
+                results, counts = analyze_games(games, engine, limit, cached, notify)
+
+        if use_cache:
+            merged = dict(cached.get("games") or {})
+            merged.update(results)
+            save_cache(merged, engine_name, limit, cache_path)
+
         report = mine_patterns(results, config, reader)
     finally:
         if reader is not None:

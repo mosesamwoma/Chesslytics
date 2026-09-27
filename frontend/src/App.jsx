@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from 'react-router-dom'
 import NavBar from './components/NavBar.jsx'
 import ChessDNA from './pages/ChessDNA.jsx'
+import Coach from './pages/Coach.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import GameAnalysis from './pages/GameAnalysis.jsx'
 import Games from './pages/Games.jsx'
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/patterns" element={<Patterns />} />
           <Route path="/training" element={<Training />} />
           <Route path="/dna" element={<ChessDNA />} />
+          <Route path="/coach" element={<Coach />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

@@ -1,15 +1,38 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mosesamwoma}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1234}
+      POSTGRES_DB: ${POSTGRES_DB:-chesslytics_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mosesamwoma} -d ${POSTGRES_DB:-chesslytics_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile
     environment:
       STOCKFISH_PATH: /usr/bin/stockfish
-      DATABASE_URL: sqlite:////data/chess_mistakes.db
+      POSTGRES_USER: ${POSTGRES_USER:-mosesamwoma}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1234}
+      POSTGRES_DB: ${POSTGRES_DB:-chesslytics_db}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
       UPLOAD_DIR: /data/uploads
       ANALYSIS_DIR: /data/analysis
       STOCKFISH_DEPTH: "12"
       CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
@@ -23,3 +46,6 @@ services:
       - backend
     ports:
       - "8080:80"
+
+volumes:
+  postgres-data:

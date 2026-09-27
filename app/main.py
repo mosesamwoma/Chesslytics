@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import analysis, games, patterns, training
+from app.api import analysis, coach, games, patterns, training
 from app.chess.engine import SearchLimit
 from app.database.database import init_db, session_scope
 from app.mining.mistake_detector import MinerConfig
@@ -46,6 +46,7 @@ app.include_router(games.router)
 app.include_router(analysis.router)
 app.include_router(patterns.router)
 app.include_router(training.router)
+app.include_router(coach.router)
 
 
 @app.get("/api/health")

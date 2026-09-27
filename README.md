@@ -96,37 +96,41 @@ sudo dnf install -y postgresql-server               # Fedora
 sudo systemctl enable --now postgresql
 ```
 
-Create the role and database used by `.env`. **Replace `<your-role>` with your own
-username** — it must match `POSTGRES_USER` in `.env`, and the angle brackets are part of
-the placeholder, not the command:
+Create the role and database used by `.env`. Set `POSTGRES_USER` in `.env` to the role you
+want (see [Configuration](#configuration)) — your own login name is the easiest choice,
+because Postgres then authenticates you over the local socket without a password too:
 
 ```bash
-sudo -u postgres psql -c "CREATE USER \"<your-role>\" WITH PASSWORD '1234';"
-sudo -u postgres psql -c "CREATE DATABASE chesslytics_db OWNER \"<your-role>\";"
+whoami                       # put this in POSTGRES_USER in .env, e.g. mosesamwoma
+set -a; . ./.env; set +a     # load POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+
+sudo -u postgres psql -c "CREATE USER \"$POSTGRES_USER\" WITH PASSWORD '$POSTGRES_PASSWORD';"
+sudo -u postgres psql -c "CREATE DATABASE \"$POSTGRES_DB\" OWNER \"$POSTGRES_USER\";"
 ```
 
-Confirm it's reachable before starting the app. The simplest check needs no password at
-all — over the local unix socket you are authenticated as your OS user by peer auth:
+Confirm it's reachable before starting the app. Re-loading `.env` first means these read
+your real values, so there is nothing to substitute by hand:
 
 ```bash
-psql -d chesslytics_db -c "\dt"                                # unix socket, no password
-psql -h 127.0.0.1 -U <your-role> -d chesslytics_db -c "\dt"    # explicit TCP, prompts
+set -a; . ./.env; set +a
+
+psql -d "$POSTGRES_DB" -c "\dt"                                       # socket, no password
+PGPASSWORD="$POSTGRES_PASSWORD" \
+  psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"    # explicit TCP
 ```
 
-An empty table list is fine — the app creates its tables on first run. If you get
-`FATAL: password authentication failed for user "...";`, either you typed the literal
-placeholder instead of your real role (a role that doesn't exist reports the same auth
-error, so Postgres doesn't leak which usernames exist), or `POSTGRES_PASSWORD` in `.env`
-doesn't match the role's actual password. You can reset your own role's password without
-`sudo`, by connecting over the socket:
+An empty table list is fine — the app creates its tables on first run. If you see
+`role "..." does not exist`, `POSTGRES_USER` still holds the `.env.example` placeholder —
+set it to a real role (`psql -d postgres -c "\du"` lists them). If you see
+`FATAL: password authentication failed`, `POSTGRES_PASSWORD` doesn't match that role; reset
+it without `sudo` over the socket:
 
 ```bash
-psql -d postgres -c "ALTER ROLE \"<your-role>\" WITH PASSWORD '1234';"
+psql -d postgres -c "ALTER ROLE \"$POSTGRES_USER\" WITH PASSWORD '$POSTGRES_PASSWORD';"
 ```
 
-If the connection is *refused* rather than rejected, check that
-`systemctl status postgresql` shows it running and that `POSTGRES_PORT` (`5432` by
-default) isn't already in use.
+If the connection is *refused* rather than rejected, check that `systemctl status postgresql`
+shows it running and that `POSTGRES_PORT` (`5432` by default) isn't already in use.
 
 Prefer not to install Postgres at all? `docker compose up postgres` creates the same
 role/database automatically from the `POSTGRES_*` values in `.env` — skip straight to
@@ -256,7 +260,7 @@ default — nothing else is required to run the sample data.
 | --- | --- | --- |
 | `STOCKFISH_PATH` | auto-detected | Stockfish binary path |
 | `STOCKFISH_DEPTH` / `STOCKFISH_TIME` | `12` / — | Default search limit |
-| `POSTGRES_USER` | `you-name` | Postgres role used to connect |
+| `POSTGRES_USER` | `you-name` | Postgres role used to connect — replace the placeholder with your own login name (`whoami`) or any existing role |
 | `POSTGRES_PASSWORD` | `1234` | Password for `POSTGRES_USER` |
 | `POSTGRES_DB` | `chesslytics_db` | Database name |
 | `POSTGRES_HOST` | `auto` | `auto` tries the `postgres` docker-compose host, then falls back to `127.0.0.1` |

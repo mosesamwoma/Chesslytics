@@ -91,27 +91,42 @@ Opening books are optional and need no extra install; standard Polyglot `.bin` f
 Install the server and client:
 
 ```bash
-sudo apt update && sudo apt install -y postgresql
+sudo apt update && sudo apt install -y postgresql   # Debian / Ubuntu
+sudo dnf install -y postgresql-server               # Fedora
 sudo systemctl enable --now postgresql
 ```
 
-Create the role and database used by `.env` (match the values below to whatever you put
-in `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`):
+Create the role and database used by `.env`. **Replace `<your-role>` with your own
+username** — it must match `POSTGRES_USER` in `.env`, and the angle brackets are part of
+the placeholder, not the command:
 
 ```bash
-sudo -u postgres psql -c "CREATE USER \"you-name\" WITH PASSWORD '1234';"
-sudo -u postgres psql -c "CREATE DATABASE chesslytics_db OWNER \"you-name\";"
+sudo -u postgres psql -c "CREATE USER \"<your-role>\" WITH PASSWORD '1234';"
+sudo -u postgres psql -c "CREATE DATABASE chesslytics_db OWNER \"<your-role>\";"
 ```
 
-Confirm it's reachable before starting the app:
+Confirm it's reachable before starting the app. The simplest check needs no password at
+all — over the local unix socket you are authenticated as your OS user by peer auth:
 
 ```bash
-psql -h 127.0.0.1 -U you-name -d chesslytics_db -c "\dt"
+psql -d chesslytics_db -c "\dt"                                # unix socket, no password
+psql -h 127.0.0.1 -U <your-role> -d chesslytics_db -c "\dt"    # explicit TCP, prompts
 ```
 
-An empty table list is fine — the app creates its tables on first run. If that command
-fails to connect, check that `sudo systemctl status postgresql` shows it running and that
-`POSTGRES_PORT` (`5432` by default) isn't already in use.
+An empty table list is fine — the app creates its tables on first run. If you get
+`FATAL: password authentication failed for user "...";`, either you typed the literal
+placeholder instead of your real role (a role that doesn't exist reports the same auth
+error, so Postgres doesn't leak which usernames exist), or `POSTGRES_PASSWORD` in `.env`
+doesn't match the role's actual password. You can reset your own role's password without
+`sudo`, by connecting over the socket:
+
+```bash
+psql -d postgres -c "ALTER ROLE \"<your-role>\" WITH PASSWORD '1234';"
+```
+
+If the connection is *refused* rather than rejected, check that
+`systemctl status postgresql` shows it running and that `POSTGRES_PORT` (`5432` by
+default) isn't already in use.
 
 Prefer not to install Postgres at all? `docker compose up postgres` creates the same
 role/database automatically from the `POSTGRES_*` values in `.env` — skip straight to

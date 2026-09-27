@@ -201,3 +201,21 @@ class Pattern(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     profile: Mapped[Optional["PlayerProfile"]] = relationship(back_populates="patterns")
+
+
+class CoachInsight(Base):
+    __tablename__ = "coach_insights"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("player_profiles.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    player: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    model: Mapped[str] = mapped_column(String(128))
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    focus_drill: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sections: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    raw_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    profile: Mapped[Optional["PlayerProfile"]] = relationship()

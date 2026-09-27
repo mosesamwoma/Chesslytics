@@ -7,6 +7,7 @@ const LINKS = [
   { to: '/patterns', label: 'Patterns' },
   { to: '/training', label: 'Training' },
   { to: '/dna', label: 'Chess DNA' },
+  { to: '/coach', label: 'Coach' },
 ]
 
 function storedTheme() {

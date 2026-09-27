@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import os
+import socket
+import time
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote_plus
 
 from sqlalchemy import Engine, create_engine, inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-DEFAULT_DATABASE_URL = "sqlite:///./data/chess_mistakes.db"
+DEFAULT_POSTGRES_USER = "postgres"
+DEFAULT_POSTGRES_PASSWORD = ""
+DEFAULT_POSTGRES_DB = "chesslytics_db"
+DEFAULT_POSTGRES_PORT = "5432"
+DEFAULT_SQLITE_URL = "sqlite:///./data/chess_mistakes.db"
+INIT_DB_RETRIES = 15
+INIT_DB_RETRY_DELAY = 2.0
 
 _engine: Optional[Engine] = None
 _session_factory: Optional[sessionmaker] = None
@@ -19,8 +29,35 @@ class Base(DeclarativeBase):
     pass
 
 
+def _resolve_postgres_host(explicit: Optional[str]) -> str:
+    if explicit and explicit.lower() != "auto":
+        return explicit
+    try:
+        socket.gethostbyname("postgres")
+        return "postgres"
+    except OSError:
+        return "localhost"
+
+
+def _postgres_url_from_env() -> str:
+    user = os.environ.get("POSTGRES_USER", DEFAULT_POSTGRES_USER)
+    password = os.environ.get("POSTGRES_PASSWORD", DEFAULT_POSTGRES_PASSWORD)
+    db = os.environ.get("POSTGRES_DB", DEFAULT_POSTGRES_DB)
+    port = os.environ.get("POSTGRES_PORT", DEFAULT_POSTGRES_PORT)
+    host = _resolve_postgres_host(os.environ.get("POSTGRES_HOST"))
+    credentials = quote_plus(user)
+    if password:
+        credentials = f"{credentials}:{quote_plus(password)}"
+    return f"postgresql+psycopg2://{credentials}@{host}:{port}/{db}"
+
+
 def database_url() -> str:
-    return os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
+    explicit = os.environ.get("DATABASE_URL")
+    if explicit:
+        return explicit
+    if os.environ.get("POSTGRES_DB") or os.environ.get("POSTGRES_USER"):
+        return _postgres_url_from_env()
+    return DEFAULT_SQLITE_URL
 
 
 def _sqlite_file(url: str) -> Optional[Path]:
@@ -46,7 +83,12 @@ def get_engine() -> Engine:
     global _engine
     if _engine is None:
         url = database_url()
-        _engine = create_engine(url, connect_args=_connect_args(url), future=True)
+        _engine = create_engine(
+            url,
+            connect_args=_connect_args(url),
+            future=True,
+            pool_pre_ping=True,
+        )
     return _engine
 
 
@@ -119,8 +161,24 @@ def ensure_columns() -> list[str]:
     return added
 
 
+def _wait_for_engine(engine: Engine) -> None:
+    last_error: Optional[OperationalError] = None
+    for attempt in range(1, INIT_DB_RETRIES + 1):
+        try:
+            with engine.connect():
+                return
+        except OperationalError as exc:
+            last_error = exc
+            if attempt < INIT_DB_RETRIES:
+                time.sleep(INIT_DB_RETRY_DELAY)
+    if last_error is not None:
+        raise last_error
+
+
 def init_db() -> None:
     from app.database.models import Base as ModelBase
 
-    ModelBase.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    _wait_for_engine(engine)
+    ModelBase.metadata.create_all(bind=engine)
     ensure_columns()

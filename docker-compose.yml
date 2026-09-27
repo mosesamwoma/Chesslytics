@@ -25,11 +25,11 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
       UPLOAD_DIR: /data/uploads
       ANALYSIS_DIR: /data/analysis
       STOCKFISH_DEPTH: "12"
-      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      CORS_ORIGINS: http://127.0.0.1:5173,http://127.0.0.1:8080
     depends_on:
       postgres:
         condition: service_healthy

@@ -19,7 +19,10 @@ from app.mining.profiler import CATEGORY_LABELS, motif_label
 from app.services import analysis_service, export_service
 
 DEFAULT_PGN = os.path.join("data", "games.pgn")
-DEFAULT_CORS = "http://localhost:5173,http://127.0.0.1:5173"
+# Pinned to the IPv4 loopback on purpose: on dual-stack machines "localhost" can
+# resolve to ::1 first, while uvicorn listens on 127.0.0.1 — the browser then sends
+# an Origin the allow-list does not contain. Use 127.0.0.1 everywhere for local dev.
+DEFAULT_CORS = "http://127.0.0.1:5173"
 
 
 @asynccontextmanager

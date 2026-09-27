@@ -325,10 +325,6 @@ def analyze_games_objects(
     notify = progress or (lambda _message: None)
     binary = find_stockfish(engine_path)
 
-    # Open (and validate) the opening book before running any engine
-    # analysis. Both python-chess's polyglot reader and the engine search
-    # can be slow, so a bad --book path should fail fast rather than only
-    # surfacing after minutes of Stockfish analysis have already run.
     chosen_book = book or config.book
     reader = open_book(chosen_book)
     try:

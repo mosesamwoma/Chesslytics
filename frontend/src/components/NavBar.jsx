@@ -30,9 +30,7 @@ export default function NavBar() {
     }
     try {
       window.localStorage.setItem('chess-theme', theme)
-    } catch {
-      /* storage unavailable */
-    }
+    } catch {}
   }, [theme])
 
   const next = theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark'

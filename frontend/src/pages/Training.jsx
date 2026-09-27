@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import ChessBoard, { sourceFromUci, squareFromUci } from '../components/ChessBoard.jsx'
+import ChessBoard from '../components/ChessBoard.jsx'
 import SeverityBadge from '../components/SeverityBadge.jsx'
 import StatTile from '../components/StatTile.jsx'
 import { categoryLabel, phaseLabel } from '../labels.js'

@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from groq import Groq, GroqError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database.models import CoachInsight, Mistake, PlayerProfile
 from app.mining.profiler import label_for
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+if TYPE_CHECKING:  # pragma: no cover - names for type checkers only
+    from groq import Groq
+
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 MAX_MISTAKES = 6
 MAX_PATTERNS = 8
 
@@ -32,11 +34,23 @@ SYSTEM_PROMPT = (
 )
 
 
-def groq_client() -> Groq:
+def _groq_module():
+    """Import the optional Groq SDK late so the API still boots without it."""
+    try:
+        import groq
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "the optional 'groq' package is not installed; run "
+            "`pip install -r requirements.txt` to enable the Coach"
+        ) from exc
+    return groq
+
+
+def groq_client() -> "Groq":
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not set")
-    return Groq(api_key=api_key)
+    return _groq_module().Groq(api_key=api_key)
 
 
 def groq_model() -> str:
@@ -136,6 +150,7 @@ def _validate_payload(data: dict) -> dict:
 
 
 def request_completion(context: dict) -> tuple[dict, str]:
+    groq = _groq_module()
     client = groq_client()
     model = groq_model()
     try:
@@ -146,7 +161,7 @@ def request_completion(context: dict) -> tuple[dict, str]:
             max_tokens=1500,
             response_format={"type": "json_object"},
         )
-    except GroqError as exc:
+    except groq.GroqError as exc:
         raise RuntimeError(f"Groq request failed: {exc}") from exc
 
     raw = response.choices[0].message.content or ""

@@ -120,7 +120,7 @@ role/database automatically from the `POSTGRES_*` values in `.env` — skip stra
 Point `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_HOST` /
 `POSTGRES_PORT` in `.env` at whichever of the above you used. Leaving `POSTGRES_HOST` as
 `auto` resolves to the `postgres` docker-compose service when it's reachable, and falls
-back to `localhost` otherwise — useful when running the API outside Docker against a
+back to `127.0.0.1` otherwise — useful when running the API outside Docker against a
 locally exposed Postgres port. Setting `DATABASE_URL` directly always overrides the
 individual `POSTGRES_*` variables.
 
@@ -131,10 +131,10 @@ individual `POSTGRES_*` variables.
    copy it.
 3. Paste it into `GROQ_API_KEY` in `.env`.
 
-`GROQ_MODEL` defaults to `llama-3.3-70b-versatile`. Other current options (see
-[console.groq.com/docs/models](https://console.groq.com/docs/models) for the live list):
-`llama-3.1-8b-instant` (faster, cheaper, lower quality), `openai/gpt-oss-120b` and
-`openai/gpt-oss-20b` (OpenAI's open-weight models, hosted on Groq). Leaving
+`GROQ_MODEL` defaults to `openai/gpt-oss-120b`. Groq retires models periodically, so if
+`/api/coach` returns a 502 mentioning `model_not_found`, switch to another from the live
+list at [console.groq.com/docs/models](https://console.groq.com/docs/models) — for example
+`openai/gpt-oss-20b` (faster, cheaper, lower quality). Leaving
 `GROQ_API_KEY` blank disables `/api/coach` only — every other feature works without it.
 
 ## Usage
@@ -170,6 +170,12 @@ Run the backend and frontend in two terminals:
 uvicorn app.main:app --reload              # http://127.0.0.1:8000
 cd frontend && npm install && npm run dev  # http://127.0.0.1:5173
 ```
+
+Both are pinned to the IPv4 loopback (`127.0.0.1`). Use that address in the browser, not
+`localhost`: on dual-stack machines `localhost` can resolve to `::1` while uvicorn and Vite
+listen on IPv4 only, which shows up as a refused connection or a CORS error. The Vite dev
+server proxies `/api` to `http://127.0.0.1:8000` (override with `VITE_BACKEND_URL`), so the
+frontend never needs cross-origin access in development.
 
 Six pages: **Dashboard** (aggregate stats), **Games** (upload/manage), **Game Analysis**
 (win-probability chart + step-through board), **Training** (puzzle drills), **Chess DNA**
@@ -238,11 +244,11 @@ default — nothing else is required to run the sample data.
 | `POSTGRES_USER` | `you-name` | Postgres role used to connect |
 | `POSTGRES_PASSWORD` | `1234` | Password for `POSTGRES_USER` |
 | `POSTGRES_DB` | `chesslytics_db` | Database name |
-| `POSTGRES_HOST` | `auto` | `auto` tries the `postgres` docker-compose host, then falls back to `localhost` |
+| `POSTGRES_HOST` | `auto` | `auto` tries the `postgres` docker-compose host, then falls back to `127.0.0.1` |
 | `POSTGRES_PORT` | `5432` | Postgres port |
 | `DATABASE_URL` | — | Full SQLAlchemy URL; overrides every `POSTGRES_*` variable above when set |
 | `GROQ_API_KEY` | — | Enables `/api/coach`; leave blank to disable it |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat model used for coaching commentary |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq chat model used for coaching commentary |
 | `UPLOAD_DIR` / `ANALYSIS_DIR` | `data/uploads` / `data/analysis` | Storage locations |
 | `ANALYSIS_CACHE` / `VERIFY_CACHE` | derived from `ANALYSIS_DIR` | Explicit cache paths |
 | `PARALLEL_WORKERS` | `1` | Default for `--workers` |

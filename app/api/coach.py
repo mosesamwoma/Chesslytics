@@ -25,8 +25,12 @@ def get_insight(
         insight = coach_service.get_or_create(db, profile, force=refresh)
     except RuntimeError as exc:
         db.rollback()
-        status_code = 503 if "GROQ_API_KEY" in str(exc) else 502
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        message = str(exc)
+        # 503 when the feature simply isn't available (no key / SDK not installed),
+        # 502 when Groq itself misbehaved.
+        unavailable = "GROQ_API_KEY" in message or "not installed" in message
+        status_code = 503 if unavailable else 502
+        raise HTTPException(status_code=status_code, detail=message) from exc
 
     db.commit()
     return coach_service.insight_payload(insight)

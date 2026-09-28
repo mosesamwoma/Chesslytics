@@ -36,8 +36,6 @@ def _resolve_postgres_host(explicit: Optional[str]) -> str:
         socket.gethostbyname("postgres")
         return "postgres"
     except OSError:
-        # 127.0.0.1 rather than "localhost": libpq can try ::1 first and fail on
-        # machines where Postgres only listens on the IPv4 loopback.
         return "127.0.0.1"
 
 

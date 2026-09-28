@@ -55,14 +55,6 @@ def find_stockfish(explicit: Optional[str] = None) -> str:
     if found:
         return found
 
-    for candidate in (
-        "/usr/bin/stockfish",
-        "/usr/local/bin/stockfish",
-        "/usr/games/stockfish",
-    ):
-        if os.path.exists(candidate):
-            return candidate
-
     raise FileNotFoundError(
         "Could not find Stockfish.\n"
         "  Fedora:  sudo dnf install stockfish\n"

@@ -26,8 +26,6 @@ def get_insight(
     except RuntimeError as exc:
         db.rollback()
         message = str(exc)
-        # 503 when the feature simply isn't available (no key / SDK not installed),
-        # 502 when Groq itself misbehaved.
         unavailable = "GROQ_API_KEY" in message or "not installed" in message
         status_code = 503 if unavailable else 502
         raise HTTPException(status_code=status_code, detail=message) from exc

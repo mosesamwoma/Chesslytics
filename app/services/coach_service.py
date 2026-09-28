@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.database.models import CoachInsight, Mistake, PlayerProfile
 from app.mining.profiler import label_for
 
-if TYPE_CHECKING:  # pragma: no cover - names for type checkers only
+if TYPE_CHECKING:
     from groq import Groq
 
 DEFAULT_MODEL = "openai/gpt-oss-120b"
@@ -35,7 +35,6 @@ SYSTEM_PROMPT = (
 
 
 def _groq_module():
-    """Import the optional Groq SDK late so the API still boots without it."""
     try:
         import groq
     except ModuleNotFoundError as exc:

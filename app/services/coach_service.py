@@ -169,7 +169,10 @@ def request_completion(context: dict) -> tuple[dict, str]:
     except json.JSONDecodeError as exc:
         raise RuntimeError("Groq response was not valid JSON") from exc
 
-    return _validate_payload(parsed), raw
+    try:
+        return _validate_payload(parsed), raw
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def latest_insight(session: Session, profile_id: int) -> Optional[CoachInsight]:

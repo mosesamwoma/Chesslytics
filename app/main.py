@@ -63,6 +63,16 @@ def mount_frontend() -> None:
 mount_frontend()
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="chesslytics",
@@ -128,7 +138,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=int(os.environ.get("PARALLEL_WORKERS", 1)),
+        default=_env_int("PARALLEL_WORKERS", 1),
         help="analyze this many games in parallel, each in its own engine process "
         "(default: 1, or $PARALLEL_WORKERS). Above 1 every worker is pinned to a single "
         "thread, because Stockfish otherwise uses every core on its own.",

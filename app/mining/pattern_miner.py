@@ -45,8 +45,8 @@ def tally_many(mistakes: Iterable[dict], key: Callable[[dict], list]) -> list[di
 
 
 def book_summary(context: dict) -> dict:
-    depths = context.pop("book_depths", []) or []
-    middle = int(median(depths)) if depths else None
+    depths = context.get("book_depths") or []
+    middle = median(depths) if depths else None
     return {
         "path": context.get("book"),
         "positions": context.get("book_positions", 0),
@@ -55,7 +55,7 @@ def book_summary(context: dict) -> dict:
         "excluded": context.get("excluded_book", 0),
         "games_following_book": context.get("games_with_book", 0),
         "median_book_ply": middle,
-        "median_book_move": (middle + 1) // 2 if middle else None,
+        "median_book_move": int((middle + 1) // 2) if middle is not None else None,
     }
 
 
@@ -92,10 +92,12 @@ def mine_patterns(
         for name, rows in patterns.items()
     }
 
+    book = book_summary(context)
+    context = {key: value for key, value in context.items() if key != "book_depths"}
     return {
         "config": config.as_dict(),
         "context": context,
-        "book": book_summary(context),
+        "book": book,
         "mistakes": mistakes,
         "patterns": patterns,
         "recurring": recurring,

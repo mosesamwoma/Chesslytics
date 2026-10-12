@@ -40,8 +40,9 @@ def best_move(board: chess.Board, mistake: Mistake) -> Optional[chess.Move]:
         try:
             move = chess.Move.from_uci(mistake.best_move_uci)
         except ValueError:
-            return None
-        return move if move in board.legal_moves else None
+            move = None
+        if move is not None and move in board.legal_moves:
+            return move
     if mistake.best_move:
         try:
             return board.parse_san(mistake.best_move)

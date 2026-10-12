@@ -45,11 +45,21 @@ def cache_file() -> Path:
     return analysis_dir() / "eval_cache.json"
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def default_limit() -> SearchLimit:
-    seconds = os.environ.get("STOCKFISH_TIME")
-    if seconds:
-        return SearchLimit("time", float(seconds))
-    return SearchLimit("depth", float(os.environ.get("STOCKFISH_DEPTH", DEFAULT_DEPTH)))
+    seconds = _env_float("STOCKFISH_TIME", 0.0)
+    if seconds > 0:
+        return SearchLimit("time", seconds)
+    return SearchLimit("depth", _env_float("STOCKFISH_DEPTH", float(DEFAULT_DEPTH)))
 
 
 def load_cache(path: Optional[str] = None) -> dict:

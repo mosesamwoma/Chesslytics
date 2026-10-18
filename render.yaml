@@ -1,0 +1,30 @@
+databases:
+  - name: chesslytics-db
+    databaseName: chesslytics
+    user: chesslytics
+    plan: basic-256mb
+    ipAllowList: []
+
+services:
+  - type: web
+    name: chesslytics
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: chesslytics-db
+          property: connectionString
+      - key: AUTH_USERNAME
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: STOCKFISH_DEPTH
+        value: "12"
+      - key: GROQ_API_KEY
+        sync: false

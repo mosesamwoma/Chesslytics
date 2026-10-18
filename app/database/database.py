@@ -51,13 +51,28 @@ def _postgres_url_from_env() -> str:
     return f"postgresql+psycopg2://{credentials}@{host}:{port}/{db}"
 
 
-def database_url() -> str:
-    explicit = os.environ.get("DATABASE_URL")
+def _normalize_url(url: str) -> str:
+    url = url.strip()
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg2://" + url[len(prefix) :]
+    return url
+
+
+def database_urls() -> list[str]:
+    urls: list[str] = []
+    explicit = os.environ.get("DATABASE_URL", "").strip()
     if explicit:
-        return explicit
+        urls.append(_normalize_url(explicit))
     if os.environ.get("POSTGRES_DB") or os.environ.get("POSTGRES_USER"):
-        return _postgres_url_from_env()
-    return DEFAULT_SQLITE_URL
+        urls.append(_postgres_url_from_env())
+    if not urls:
+        urls.append(DEFAULT_SQLITE_URL)
+    return list(dict.fromkeys(urls))
+
+
+def database_url() -> str:
+    return database_urls()[0]
 
 
 def _sqlite_file(url: str) -> Optional[Path]:
@@ -79,16 +94,19 @@ def _connect_args(url: str) -> dict:
     return {"check_same_thread": False}
 
 
+def _build_engine(url: str) -> Engine:
+    return create_engine(
+        url,
+        connect_args=_connect_args(url),
+        future=True,
+        pool_pre_ping=True,
+    )
+
+
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
-        url = database_url()
-        _engine = create_engine(
-            url,
-            connect_args=_connect_args(url),
-            future=True,
-            pool_pre_ping=True,
-        )
+        _engine = _build_engine(database_url())
     return _engine
 
 
@@ -161,24 +179,35 @@ def ensure_columns() -> list[str]:
     return added
 
 
-def _wait_for_engine(engine: Engine) -> None:
+def _connect_first_available() -> Engine:
+    global _engine, _session_factory
+    urls = database_urls()
     last_error: Optional[OperationalError] = None
     for attempt in range(1, INIT_DB_RETRIES + 1):
-        try:
-            with engine.connect():
-                return
-        except OperationalError as exc:
-            last_error = exc
-            if attempt < INIT_DB_RETRIES:
-                time.sleep(INIT_DB_RETRY_DELAY)
+        for url in urls:
+            candidate = _build_engine(url)
+            try:
+                with candidate.connect():
+                    pass
+            except OperationalError as exc:
+                last_error = exc
+                candidate.dispose()
+                continue
+            if _engine is not None:
+                _engine.dispose()
+            _engine = candidate
+            _session_factory = None
+            return candidate
+        if attempt < INIT_DB_RETRIES:
+            time.sleep(INIT_DB_RETRY_DELAY)
     if last_error is not None:
         raise last_error
+    raise RuntimeError("no database url configured")
 
 
 def init_db() -> None:
     from app.database.models import Base as ModelBase
 
-    engine = get_engine()
-    _wait_for_engine(engine)
+    engine = _connect_first_available()
     ModelBase.metadata.create_all(bind=engine)
     ensure_columns()

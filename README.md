@@ -44,6 +44,8 @@ something you can actually study.
   position, get graded on winning-chance loss, and track accuracy per category over time.
 - **Four interfaces, one engine** — CLI, REST API, Postgres-backed persistence, and a
   React/Vite dashboard, all built on the same analysis core.
+- **Optional login** — set `AUTH_PASSWORD` and every API route requires a signed session token; leave it
+  empty and the app stays open for local use.
 - **Exports** — JSON, CSV, or JSONL, from both the CLI and the API, for anyone who wants
   to do their own analysis downstream.
 
@@ -56,22 +58,22 @@ cd Chesslytics
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-which stockfish
+# install Stockfish for your platform, see below
+which stockfish   # confirm the path, then set it in .env
+
+# install Postgres (or run `docker compose up postgres` to use the bundled one)
 
 cp .env.example .env
+# set POSTGRES_* to match your Postgres instance, and GROQ_API_KEY if you want
+# the Coach feature — everything else works without it
 
 python -m app.main --pgn data/sample_games.pgn --limit-time 0.05
 ```
 
-Install Stockfish for your platform first (see below) and use the output of
-`which stockfish` to set `STOCKFISH_PATH` in `.env`. Install Postgres, or run
-`docker compose up postgres` to use the bundled one, and set the `POSTGRES_*` values in
-`.env` to match your instance. Set `GROQ_API_KEY` only if you want the Coach feature —
-everything else works without it.
-
 ## Installation
 
-Requires **Python 3.11+**, a **Stockfish** binary, and a **Postgres** database.
+Requires **Python 3.11+**, a **Stockfish** binary, a **Postgres** database, and **Node.js 22+** for the
+web app (Vite 8 needs a recent Node).
 
 | Platform | Command |
 | --- | --- |
@@ -89,37 +91,35 @@ Opening books are optional and need no extra install; standard Polyglot `.bin` f
 
 ### Setting up Postgres (Linux)
 
-Install the server and client. Use the line for your distribution:
+Install the server and client:
 
 ```bash
-sudo apt update && sudo apt install -y postgresql
-sudo dnf install -y postgresql-server
+sudo apt update && sudo apt install -y postgresql   # Debian / Ubuntu
+sudo dnf install -y postgresql-server               # Fedora
 sudo systemctl enable --now postgresql
 ```
 
 Create the role and database used by `.env`. Set `POSTGRES_USER` in `.env` to the role you
 want (see [Configuration](#configuration)) — your own login name is the easiest choice,
-because Postgres then authenticates you over the local socket without a password too. Run
-`whoami` to see your login name, then load `.env` and create the role and database:
+because Postgres then authenticates you over the local socket without a password too:
 
 ```bash
-whoami
-set -a; . ./.env; set +a
+whoami                       # put this in POSTGRES_USER in .env, e.g. mosesamwoma
+set -a; . ./.env; set +a     # load POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
 
 sudo -u postgres psql -c "CREATE USER \"$POSTGRES_USER\" WITH PASSWORD '$POSTGRES_PASSWORD';"
 sudo -u postgres psql -c "CREATE DATABASE \"$POSTGRES_DB\" OWNER \"$POSTGRES_USER\";"
 ```
 
 Confirm it's reachable before starting the app. Re-loading `.env` first means these read
-your real values, so there is nothing to substitute by hand. The first command connects
-over the socket without a password; the second connects explicitly over TCP:
+your real values, so there is nothing to substitute by hand:
 
 ```bash
 set -a; . ./.env; set +a
 
-psql -d "$POSTGRES_DB" -c "\dt"
+psql -d "$POSTGRES_DB" -c "\dt"                                       # socket, no password
 PGPASSWORD="$POSTGRES_PASSWORD" \
-  psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"
+  psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"    # explicit TCP
 ```
 
 An empty table list is fine — the app creates its tables on first run. If you see
@@ -143,8 +143,10 @@ Point `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_HOST` /
 `POSTGRES_PORT` in `.env` at whichever of the above you used. Leaving `POSTGRES_HOST` as
 `auto` resolves to the `postgres` docker-compose service when it's reachable, and falls
 back to `127.0.0.1` otherwise — useful when running the API outside Docker against a
-locally exposed Postgres port. Setting `DATABASE_URL` directly always overrides the
-individual `POSTGRES_*` variables.
+locally exposed Postgres port. If `DATABASE_URL` is set, the app tries it first and falls back
+to the individual `POSTGRES_*` variables when it can't connect, so you can fill in both. URLs
+starting with `postgres://` or `postgresql://` (as hosts like Render give them) are accepted
+as they are.
 
 ### Getting a Groq API key (optional, enables Coach)
 
@@ -170,7 +172,7 @@ python -m app.main --pgn games.pgn --player Alice --limit-time 0.1
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--pgn` | `data/games.pgn` | PGN file to analyze |
-| `--depth` / `--limit-time` | `STOCKFISH_DEPTH` (else `12`) / `STOCKFISH_TIME` | Search depth, or seconds per move (overrides depth) |
+| `--depth` / `--limit-time` | `12` / — | Search depth, or seconds per move (overrides depth) |
 | `--min-loss` | `1.0` | Minimum pawn loss to report — don't go much below 1.0 at depth 12 (engine noise) |
 | `--player` / `--color` | — / `both` | Restrict to one player or color |
 | `--time-pressure` | `30` | Seconds below which a move is flagged as time-pressured |
@@ -186,12 +188,11 @@ with yours.
 
 ### Web App
 
-Run the backend and frontend in two terminals. The backend serves on
-`http://127.0.0.1:8000` and the frontend on `http://127.0.0.1:5173`:
+Run the backend and frontend in two terminals:
 
 ```bash
-uvicorn app.main:app --reload
-cd frontend && npm install && npm run dev
+uvicorn app.main:app --reload              # http://127.0.0.1:8000
+cd frontend && npm install && npm run dev  # http://127.0.0.1:5173
 ```
 
 Both are pinned to the IPv4 loopback (`127.0.0.1`). Use that address in the browser, not
@@ -205,13 +206,25 @@ Six pages: **Dashboard** (aggregate stats), **Games** (upload/manage), **Game An
 (your mistake profile), and **Coach** (AI coaching commentary generated from your profile,
 with a Regenerate button).
 
-Uploads accept `.pgn` and `.txt` files. Files with no moves, or with no player names in
-the headers, are skipped with a message explaining why.
-
 For a single-server deployment, build the frontend (`npm run build`) and point
 `FRONTEND_DIST` at `frontend/dist` — FastAPI will serve it directly, no separate dev server
-needed. Refreshing or opening a page URL such as `/games/5` directly works too, because
-unknown non-API paths fall back to the app's `index.html`.
+needed.
+
+### Login
+
+Login is off by default so local use stays frictionless. To turn it on, set a password in `.env`:
+
+```bash
+AUTH_USERNAME=admin
+AUTH_PASSWORD=choose-a-long-password
+```
+
+With `AUTH_PASSWORD` set, the web app shows a sign-in page and every `/api/...` route except
+`/api/health` and `/api/auth/*` returns `401` without a valid session token. Tokens are signed with
+`AUTH_SECRET` (derived from the username and password when not set), expire after
+`AUTH_TOKEN_HOURS` (default 12), and stop working immediately if the password changes. Five failed
+sign-ins from the same address lock sign-in for five minutes. There is one account; this protects a
+personal deployment, it is not a multi-user system. Use HTTPS in production (Render provides it).
 
 ### Docker
 
@@ -219,7 +232,8 @@ unknown non-API paths fall back to the app's `index.html`.
 docker compose up --build
 ```
 
-Backend on `:8000`, frontend on `:8080` via nginx, Postgres on its default port with data
+The backend image also contains the built web app, so `:8000` serves the full app by itself. Backend on
+`:8000`, frontend on `:8080` via nginx, Postgres on its default port with data
 persisted in a named volume. `./data` is mounted so uploads and the evaluation cache
 survive rebuilds. The backend waits for Postgres to report healthy before starting.
 
@@ -231,9 +245,6 @@ centipawns (dropping 2 pawns at +0.5 loses the game; the same 2 pawns at +9.0 ch
 nothing). A move matching the stored best move is graded instantly with zero engine calls;
 anything else costs one engine call. Every attempt persists, and accuracy is tracked
 per category so "what should I study" has a real answer.
-
-Re-analyzing stored games rebuilds their mistakes, so puzzle attempts recorded against the
-previous set of mistakes for those games are cleared at the same time.
 
 ### Coach
 
@@ -260,7 +271,41 @@ rather than failing silently, and every other feature keeps working normally.
 | `POST` | `/api/training/puzzles/{id}/attempt` | Grade a move, persist the attempt |
 | `GET` | `/api/training/stats` | Attempts, solves, and accuracy per category |
 
+Auth routes: `GET /api/auth/status` (public, tells the app whether login is on), `POST /api/auth/login`
+(returns a bearer token), and `GET /api/auth/me`.
+
 Full interactive docs at `/docs` while the server is running.
+
+## Deploy on Render
+
+The repository's root `Dockerfile` builds the web app and the API into **one** service, so Render needs
+only a web service and a Postgres database.
+
+**Option A: Blueprint.** Push the repo to GitHub, then in Render choose **New** → **Blueprint** and select
+the repo. Render reads `render.yaml`, creates the database and the web service, and asks for
+`AUTH_USERNAME` and `AUTH_PASSWORD` (and optionally `GROQ_API_KEY`). `DATABASE_URL` is filled in
+automatically from the database.
+
+**Option B: by hand.**
+
+1. **New** → **PostgreSQL**, pick a paid plan, copy the **Internal Database URL**.
+2. **New** → **Web Service**, pick the repo, set **Runtime** to **Docker**, and add these environment
+   variables:
+
+| Variable | Value |
+| --- | --- |
+| `DATABASE_URL` | the Internal Database URL (the `postgres://` form works as is) |
+| `AUTH_USERNAME` | your username |
+| `AUTH_PASSWORD` | a long password |
+| `AUTH_SECRET` | any long random string |
+| `GROQ_API_KEY` | optional, enables Coach |
+
+3. Set the health check path to `/api/health`, deploy, and open the service URL.
+
+The service listens on Render's `PORT` automatically. You can also set the `POSTGRES_*` variables as a
+fallback in case `DATABASE_URL` cannot connect. Without a persistent disk, the evaluation cache and
+uploaded PGN files are cleared on each deploy; games and mistakes live in Postgres and are kept.
+
 
 ## Configuration
 
@@ -270,13 +315,17 @@ default — nothing else is required to run the sample data.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `STOCKFISH_PATH` | auto-detected | Stockfish binary path |
-| `STOCKFISH_DEPTH` / `STOCKFISH_TIME` | `12` / — | Default search limit for the CLI and API when no depth or time is given; `STOCKFISH_TIME` takes priority when set |
+| `STOCKFISH_DEPTH` / `STOCKFISH_TIME` | `12` / — | Default search limit |
 | `POSTGRES_USER` | `you-name` | Postgres role used to connect — replace the placeholder with your own login name (`whoami`) or any existing role |
 | `POSTGRES_PASSWORD` | `1234` | Password for `POSTGRES_USER` |
 | `POSTGRES_DB` | `chesslytics_db` | Database name |
 | `POSTGRES_HOST` | `auto` | `auto` tries the `postgres` docker-compose host, then falls back to `127.0.0.1` |
 | `POSTGRES_PORT` | `5432` | Postgres port |
-| `DATABASE_URL` | — | Full SQLAlchemy URL; overrides every `POSTGRES_*` variable above when set |
+| `DATABASE_URL` | — | Full database URL, tried first; the `POSTGRES_*` variables above are the fallback if it can't connect |
+| `AUTH_USERNAME` | `admin` | Login username when login is enabled |
+| `AUTH_PASSWORD` | — | Setting this turns login on; leave blank to keep the app open |
+| `AUTH_SECRET` | derived | Key used to sign session tokens; set a long random value in production |
+| `AUTH_TOKEN_HOURS` | `12` | How long a sign-in lasts |
 | `GROQ_API_KEY` | — | Enables `/api/coach`; leave blank to disable it |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq chat model used for coaching commentary |
 | `UPLOAD_DIR` / `ANALYSIS_DIR` | `data/uploads` / `data/analysis` | Storage locations |
@@ -295,8 +344,7 @@ default — nothing else is required to run the sample data.
 - `--min-loss` below ~1.0 pawn at depth 12 mixes real mistakes with engine search noise;
   raise `--depth` before lowering the threshold.
 - Time-pressure stats require clock annotations in the PGN (present on Chess.com exports,
-  often absent elsewhere). The first move of each side has no earlier clock reading, so it
-  is never flagged as time-pressured.
+  often absent elsewhere).
 - Sequential analysis carries Stockfish's transposition table across games in the same run,
   so results can shift slightly if games are added or reordered. `--workers 2+` isolates
   each game and avoids this.
@@ -310,7 +358,7 @@ default — nothing else is required to run the sample data.
 
 ## Privacy
 
-Your PGNs are personal data. `data/games.pgn` is gitignored by default — keep it that way
+Your PGNs are personal data. Turn on login (`AUTH_PASSWORD`) before putting the app on the internet. `data/games.pgn` is gitignored by default — keep it that way
 unless you're fine with your games being public. Everything runs locally except the Coach
 feature, which sends the mined pattern/profile summary (not raw PGNs or board positions) to
 Groq's API when `GROQ_API_KEY` is set. Leave it blank to keep Chesslytics fully local.

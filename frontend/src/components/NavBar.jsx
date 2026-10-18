@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext.jsx'
 
 const LINKS = [
   { to: '/', label: 'Dashboard', end: true },
@@ -20,6 +21,7 @@ function storedTheme() {
 
 export default function NavBar() {
   const [theme, setTheme] = useState(() => storedTheme() || 'system')
+  const { status, logout } = useAuth()
 
   useEffect(() => {
     const root = document.documentElement
@@ -59,6 +61,11 @@ export default function NavBar() {
       >
         Theme: {theme}
       </button>
+      {status === 'authenticated' ? (
+        <button type="button" className="button" onClick={logout}>
+          Sign out
+        </button>
+      ) : null}
     </nav>
   )
 }

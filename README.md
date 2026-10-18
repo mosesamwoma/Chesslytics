@@ -7,6 +7,8 @@ the results for **recurring** weaknesses — not "you blundered on move 23," but
 pieces in the middlegame under time pressure, four games running." Stockfish tells you what
 happened in one game. This tool tells you what keeps happening across all of them.
 
+**Live app:** [chesslytics.onrender.com](https://chesslytics.onrender.com/)
+
 ---
 
 ## Why this exists

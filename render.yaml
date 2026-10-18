@@ -2,14 +2,14 @@ databases:
   - name: chesslytics-db
     databaseName: chesslytics
     user: chesslytics
-    plan: 0.1c-256mb
+    plan: free             
     ipAllowList: []
 
 services:
   - type: web
     name: chesslytics
     runtime: docker
-    plan: starter
+    plan: free             
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /api/health

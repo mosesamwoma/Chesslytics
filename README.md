@@ -56,17 +56,18 @@ cd Chesslytics
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# install Stockfish for your platform, see below
-which stockfish   # confirm the path, then set it in .env
-
-# install Postgres (or run `docker compose up postgres` to use the bundled one)
+which stockfish
 
 cp .env.example .env
-# set POSTGRES_* to match your Postgres instance, and GROQ_API_KEY if you want
-# the Coach feature — everything else works without it
 
 python -m app.main --pgn data/sample_games.pgn --limit-time 0.05
 ```
+
+Install Stockfish for your platform first (see below) and use the output of
+`which stockfish` to set `STOCKFISH_PATH` in `.env`. Install Postgres, or run
+`docker compose up postgres` to use the bundled one, and set the `POSTGRES_*` values in
+`.env` to match your instance. Set `GROQ_API_KEY` only if you want the Coach feature —
+everything else works without it.
 
 ## Installation
 
@@ -88,35 +89,37 @@ Opening books are optional and need no extra install; standard Polyglot `.bin` f
 
 ### Setting up Postgres (Linux)
 
-Install the server and client:
+Install the server and client. Use the line for your distribution:
 
 ```bash
-sudo apt update && sudo apt install -y postgresql   # Debian / Ubuntu
-sudo dnf install -y postgresql-server               # Fedora
+sudo apt update && sudo apt install -y postgresql
+sudo dnf install -y postgresql-server
 sudo systemctl enable --now postgresql
 ```
 
 Create the role and database used by `.env`. Set `POSTGRES_USER` in `.env` to the role you
 want (see [Configuration](#configuration)) — your own login name is the easiest choice,
-because Postgres then authenticates you over the local socket without a password too:
+because Postgres then authenticates you over the local socket without a password too. Run
+`whoami` to see your login name, then load `.env` and create the role and database:
 
 ```bash
-whoami                       # put this in POSTGRES_USER in .env, e.g. mosesamwoma
-set -a; . ./.env; set +a     # load POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+whoami
+set -a; . ./.env; set +a
 
 sudo -u postgres psql -c "CREATE USER \"$POSTGRES_USER\" WITH PASSWORD '$POSTGRES_PASSWORD';"
 sudo -u postgres psql -c "CREATE DATABASE \"$POSTGRES_DB\" OWNER \"$POSTGRES_USER\";"
 ```
 
 Confirm it's reachable before starting the app. Re-loading `.env` first means these read
-your real values, so there is nothing to substitute by hand:
+your real values, so there is nothing to substitute by hand. The first command connects
+over the socket without a password; the second connects explicitly over TCP:
 
 ```bash
 set -a; . ./.env; set +a
 
-psql -d "$POSTGRES_DB" -c "\dt"                                       # socket, no password
+psql -d "$POSTGRES_DB" -c "\dt"
 PGPASSWORD="$POSTGRES_PASSWORD" \
-  psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"    # explicit TCP
+  psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"
 ```
 
 An empty table list is fine — the app creates its tables on first run. If you see
@@ -167,7 +170,7 @@ python -m app.main --pgn games.pgn --player Alice --limit-time 0.1
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--pgn` | `data/games.pgn` | PGN file to analyze |
-| `--depth` / `--limit-time` | `12` / — | Search depth, or seconds per move (overrides depth) |
+| `--depth` / `--limit-time` | `STOCKFISH_DEPTH` (else `12`) / `STOCKFISH_TIME` | Search depth, or seconds per move (overrides depth) |
 | `--min-loss` | `1.0` | Minimum pawn loss to report — don't go much below 1.0 at depth 12 (engine noise) |
 | `--player` / `--color` | — / `both` | Restrict to one player or color |
 | `--time-pressure` | `30` | Seconds below which a move is flagged as time-pressured |
@@ -183,11 +186,12 @@ with yours.
 
 ### Web App
 
-Run the backend and frontend in two terminals:
+Run the backend and frontend in two terminals. The backend serves on
+`http://127.0.0.1:8000` and the frontend on `http://127.0.0.1:5173`:
 
 ```bash
-uvicorn app.main:app --reload              # http://127.0.0.1:8000
-cd frontend && npm install && npm run dev  # http://127.0.0.1:5173
+uvicorn app.main:app --reload
+cd frontend && npm install && npm run dev
 ```
 
 Both are pinned to the IPv4 loopback (`127.0.0.1`). Use that address in the browser, not
@@ -201,9 +205,13 @@ Six pages: **Dashboard** (aggregate stats), **Games** (upload/manage), **Game An
 (your mistake profile), and **Coach** (AI coaching commentary generated from your profile,
 with a Regenerate button).
 
+Uploads accept `.pgn` and `.txt` files. Files with no moves, or with no player names in
+the headers, are skipped with a message explaining why.
+
 For a single-server deployment, build the frontend (`npm run build`) and point
 `FRONTEND_DIST` at `frontend/dist` — FastAPI will serve it directly, no separate dev server
-needed.
+needed. Refreshing or opening a page URL such as `/games/5` directly works too, because
+unknown non-API paths fall back to the app's `index.html`.
 
 ### Docker
 
@@ -223,6 +231,9 @@ centipawns (dropping 2 pawns at +0.5 loses the game; the same 2 pawns at +9.0 ch
 nothing). A move matching the stored best move is graded instantly with zero engine calls;
 anything else costs one engine call. Every attempt persists, and accuracy is tracked
 per category so "what should I study" has a real answer.
+
+Re-analyzing stored games rebuilds their mistakes, so puzzle attempts recorded against the
+previous set of mistakes for those games are cleared at the same time.
 
 ### Coach
 
@@ -259,7 +270,7 @@ default — nothing else is required to run the sample data.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `STOCKFISH_PATH` | auto-detected | Stockfish binary path |
-| `STOCKFISH_DEPTH` / `STOCKFISH_TIME` | `12` / — | Default search limit |
+| `STOCKFISH_DEPTH` / `STOCKFISH_TIME` | `12` / — | Default search limit for the CLI and API when no depth or time is given; `STOCKFISH_TIME` takes priority when set |
 | `POSTGRES_USER` | `you-name` | Postgres role used to connect — replace the placeholder with your own login name (`whoami`) or any existing role |
 | `POSTGRES_PASSWORD` | `1234` | Password for `POSTGRES_USER` |
 | `POSTGRES_DB` | `chesslytics_db` | Database name |
@@ -284,7 +295,8 @@ default — nothing else is required to run the sample data.
 - `--min-loss` below ~1.0 pawn at depth 12 mixes real mistakes with engine search noise;
   raise `--depth` before lowering the threshold.
 - Time-pressure stats require clock annotations in the PGN (present on Chess.com exports,
-  often absent elsewhere).
+  often absent elsewhere). The first move of each side has no earlier clock reading, so it
+  is never flagged as time-pressured.
 - Sequential analysis carries Stockfish's transposition table across games in the same run,
   so results can shift slightly if games are added or reordered. `--workers 2+` isolates
   each game and avoids this.

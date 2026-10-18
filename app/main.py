@@ -7,12 +7,13 @@ import time
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import analysis, coach, games, patterns, training
+from app import auth
+from app.api import analysis, auth as auth_api, coach, games, patterns, training
 from app.chess.engine import SearchLimit
 from app.database.database import init_db, session_scope
 from app.mining.mistake_detector import MinerConfig
@@ -43,11 +44,13 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition", "X-Mistake-Count"],
 )
-app.include_router(games.router)
-app.include_router(analysis.router)
-app.include_router(patterns.router)
-app.include_router(training.router)
-app.include_router(coach.router)
+protected = [Depends(auth.require_auth)]
+app.include_router(auth_api.router)
+app.include_router(games.router, dependencies=protected)
+app.include_router(analysis.router, dependencies=protected)
+app.include_router(patterns.router, dependencies=protected)
+app.include_router(training.router, dependencies=protected)
+app.include_router(coach.router, dependencies=protected)
 
 
 @app.get("/api/health")

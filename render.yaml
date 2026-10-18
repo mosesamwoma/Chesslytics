@@ -2,7 +2,7 @@ databases:
   - name: chesslytics-db
     databaseName: chesslytics
     user: chesslytics
-    plan: basic-256mb
+    plan: 0.1c-256mb
     ipAllowList: []
 
 services:

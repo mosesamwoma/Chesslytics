@@ -45,7 +45,7 @@ def safe_filename(filename: str) -> str:
     cleaned = "".join(ch for ch in name if ch.isalnum() or ch in "._- ")
     cleaned = cleaned.strip().lstrip(".") or "upload"
     if Path(cleaned).suffix.lower() not in ALLOWED_SUFFIXES:
-        raise ValueError("only .pgn files are accepted")
+        raise ValueError("only .pgn or .txt files are accepted")
     return cleaned
 
 

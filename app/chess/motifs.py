@@ -51,7 +51,14 @@ def mate_threats(board: chess.Board) -> list[dict]:
             if not board.is_checkmate():
                 continue
             king_square = board.king(board.turn)
-            back_rank = king_square is not None and chess.square_rank(king_square) in (0, 7)
+            back_rank = (
+                king_square is not None
+                and chess.square_rank(king_square) in (0, 7)
+                and all(
+                    chess.square_rank(square) == chess.square_rank(king_square)
+                    for square in board.checkers()
+                )
+            )
         finally:
             board.pop()
         found.append(

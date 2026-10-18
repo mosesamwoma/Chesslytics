@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ChessBoard from '../components/ChessBoard.jsx'
 import SeverityBadge from '../components/SeverityBadge.jsx'
@@ -232,7 +232,7 @@ export default function Training() {
       ) : null}
 
       {stats ? (
-        <div className="tiles">
+        <div className="grid grid-kpi" style={{ marginBottom: 16 }}>
           <StatTile label="Puzzles available" value={stats.puzzles_available} />
           <StatTile label="Attempts" value={stats.attempts} />
           <StatTile label="Solved" value={stats.correct} />

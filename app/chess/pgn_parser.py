@@ -37,8 +37,14 @@ def _read_stream(stream: IO[str]) -> tuple[list[chess.pgn.Game], list[str]]:
         try:
             if game.errors:
                 raise ValueError("; ".join(str(error) for error in game.errors))
-            if not game.headers.get("White") and not game.headers.get("Black"):
+            unnamed = ("", "?")
+            if (
+                game.headers.get("White", "") in unnamed
+                and game.headers.get("Black", "") in unnamed
+            ):
                 raise ValueError("no player headers")
+            if not game.variations:
+                raise ValueError("no moves")
             games.append(game)
         except Exception as exc:
             errors.append(f"game #{index}: skipped ({exc})")

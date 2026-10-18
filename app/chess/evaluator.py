@@ -69,7 +69,7 @@ def evaluate_move(
         "uci": move.uci(),
         "fen_before": board.fen(),
         "phase": game_phase(board, move_number),
-        "clock_before": clock_of(node.parent),
+        "clock_before": clock_of(node.parent.parent if node.parent is not None else None),
         "clock_after": clock_of(node),
         "material_before": material_balance(board),
         "king_safety_before": king_safety(board, color),

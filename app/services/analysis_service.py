@@ -21,13 +21,13 @@ from app.chess.evaluator import (
     score_to_cp,
 )
 from app.chess.pgn_parser import load_games, parse_pgn
-from app.database.models import Game, Mistake, Pattern, PlayerProfile
+from app.database.models import Game, Mistake, Pattern, PlayerProfile, PuzzleAttempt
 from app.mining.mistake_detector import MinerConfig
 from app.mining.pattern_miner import MIN_GAMES_FOR_PATTERN, mine_patterns
 from app.mining.profiler import build_profile, label_for
 from app.services import game_service
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_DEPTH = 12
 DEFAULT_WORKERS = 1
 
@@ -464,6 +464,8 @@ def persist_analysis(
 
     stored_ids = [game.id for game in by_fingerprint.values()]
     if stored_ids:
+        stale = select(Mistake.id).where(Mistake.game_id.in_(stored_ids))
+        session.execute(delete(PuzzleAttempt).where(PuzzleAttempt.mistake_id.in_(stale)))
         session.execute(delete(Mistake).where(Mistake.game_id.in_(stored_ids)))
         session.flush()
 

@@ -52,11 +52,10 @@ def find_hanging_pieces(board: chess.Board, color: chess.Color) -> list[dict]:
         if not board.is_capture(move):
             continue
         square = move.to_square
-        victim = (
-            board.piece_at(_en_passant_victim_square(move))
-            if board.is_en_passant(move)
-            else board.piece_at(square)
+        victim_square = (
+            _en_passant_victim_square(move) if board.is_en_passant(move) else square
         )
+        victim = board.piece_at(victim_square)
         if victim is None or victim.color != color or victim.piece_type == chess.KING:
             continue
 
@@ -69,7 +68,7 @@ def find_hanging_pieces(board: chess.Board, color: chess.Color) -> list[dict]:
         attackers = board.attackers(opponent, square)
         defenders = board.attackers(color, square)
         best_by_square[square] = {
-            "square": chess.square_name(square),
+            "square": chess.square_name(victim_square),
             "piece": victim.symbol(),
             "name": PIECE_NAMES[victim.piece_type],
             "value": PIECE_VALUES[victim.piece_type],

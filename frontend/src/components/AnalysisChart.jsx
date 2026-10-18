@@ -38,18 +38,10 @@ export default function AnalysisChart({ sequence = [], mistakes = [], perspectiv
   const points = useMemo(() => {
     const rows = []
     sequence.forEach((move) => {
-      const before = flip(move.winpct_before, move.color, perspective)
       const after = flip(move.winpct_after, move.color, perspective)
-      if (before === null) return
-      rows.push({ ply: move.ply, value: before, post: after === null ? before : after, move })
+      if (after === null) return
+      rows.push({ ply: move.ply, value: after, post: after, move })
     })
-    const last = sequence[sequence.length - 1]
-    if (last) {
-      const after = flip(last.winpct_after, last.color, perspective)
-      if (after !== null) {
-        rows.push({ ply: last.ply + 1, value: after, post: after, move: last, tail: true })
-      }
-    }
     return rows
   }, [sequence, perspective])
 
@@ -134,7 +126,7 @@ export default function AnalysisChart({ sequence = [], mistakes = [], perspectiv
           </thead>
           <tbody>
             {points.map((point) => (
-              <tr key={`${point.ply}-${point.tail ? 't' : 'm'}`}>
+              <tr key={point.ply}>
                 <td>
                   {point.move.move_number}
                   {point.move.color === 'white' ? '.' : '...'}

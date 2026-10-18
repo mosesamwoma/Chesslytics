@@ -94,7 +94,9 @@ def _config(
 def _limit(depth: Optional[int], time_limit: Optional[float]) -> SearchLimit:
     if time_limit is not None:
         return SearchLimit("time", time_limit)
-    return SearchLimit("depth", float(depth or analysis_service.DEFAULT_DEPTH))
+    if depth:
+        return SearchLimit("depth", float(depth))
+    return analysis_service.default_limit()
 
 
 def _report_summary(report: dict) -> dict:

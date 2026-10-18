@@ -19,6 +19,11 @@ export default function Games() {
     setError(null)
     try {
       const payload = await listGames({ limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+      const last = Math.max(0, Math.ceil(payload.total / PAGE_SIZE) - 1)
+      if (page > last) {
+        setPage(last)
+        return
+      }
       setData(payload)
     } catch (err) {
       setError(err)

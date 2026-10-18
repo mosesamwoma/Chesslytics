@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import analysis, coach, games, patterns, training
 from app.chess.engine import SearchLimit
@@ -54,10 +55,20 @@ def health() -> dict:
     return {"status": "ok", "service": "chesslytics"}
 
 
+class SinglePageFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or path.startswith("api/"):
+                raise
+            return await super().get_response("index.html", scope)
+
+
 def mount_frontend() -> None:
     directory = Path(os.environ.get("FRONTEND_DIST", "frontend/dist")).expanduser()
     if directory.is_dir():
-        app.mount("/", StaticFiles(directory=str(directory), html=True), name="frontend")
+        app.mount("/", SinglePageFiles(directory=str(directory), html=True), name="frontend")
 
 
 mount_frontend()
@@ -98,8 +109,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--depth",
         type=int,
-        default=12,
-        help="engine search depth per position (default: 12)",
+        default=None,
+        help="engine search depth per position (default: $STOCKFISH_DEPTH, else 12)",
     )
     parser.add_argument(
         "--limit-time",
@@ -402,11 +413,12 @@ def main(argv=None) -> int:
         )
         return 2
 
-    limit = (
-        SearchLimit("time", args.limit_time)
-        if args.limit_time is not None
-        else SearchLimit("depth", args.depth)
-    )
+    if args.limit_time is not None:
+        limit = SearchLimit("time", args.limit_time)
+    elif args.depth is not None:
+        limit = SearchLimit("depth", args.depth)
+    else:
+        limit = analysis_service.default_limit()
     config = MinerConfig(
         min_loss=args.min_loss,
         time_pressure=args.time_pressure,

@@ -13,11 +13,11 @@ from app.database.models import CoachInsight, Mistake, PlayerProfile, utcnow
 from app.mining.profiler import label_for
 
 if TYPE_CHECKING:
-    from groq import Groq
+    from google.genai.client import Client
 
 logger = logging.getLogger("chesslytics")
 
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_MODEL = "gemini-2.5-flash"
 REQUEST_TIMEOUT_SECONDS = 45.0
 MAX_COMPLETION_TOKENS = 4000
 MAX_MISTAKES = 6
@@ -40,28 +40,33 @@ SYSTEM_PROMPT = (
 )
 
 
-def _groq_module():
+def _gemini_modules():
     try:
-        import groq
+        from google import genai
+        from google.genai import types
     except ModuleNotFoundError as exc:
         raise RuntimeError(
-            "the optional 'groq' package is not installed; run "
+            "the optional 'google-genai' package is not installed; run "
             "`pip install -r requirements.txt` to enable the Coach"
         ) from exc
-    return groq
+    return genai, types
 
 
-def groq_client() -> "Groq":
-    api_key = os.environ.get("GROQ_API_KEY")
+def gemini_client() -> "Client":
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not set")
-    return _groq_module().Groq(
-        api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=1
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    genai, types = _gemini_modules()
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            timeout=int(REQUEST_TIMEOUT_SECONDS * 1000), retries=1
+        ),
     )
 
 
-def groq_model() -> str:
-    return os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
+def gemini_model() -> str:
+    return os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
 
 
 def _mistake_row(mistake: Mistake) -> dict:
@@ -162,22 +167,25 @@ def _validate_payload(data: dict) -> dict:
 
 
 def request_completion(context: dict) -> tuple[dict, str]:
-    groq = _groq_module()
-    client = groq_client()
-    model = groq_model()
+    genai, types = _gemini_modules()
+    client = gemini_client()
+    model = gemini_model()
     try:
-        response = client.chat.completions.create(
+        response = client.models.generate_content(
             model=model,
-            messages=build_messages(context),
-            temperature=0.4,
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
-            response_format={"type": "json_object"},
+            contents=json.dumps(context),
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=0.4,
+                max_output_tokens=MAX_COMPLETION_TOKENS,
+                response_mime_type="application/json",
+            ),
         )
-    except groq.GroqError as exc:
-        logger.warning("Groq request failed: %s", exc)
+    except genai.errors.APIError as exc:
+        logger.warning("Gemini request failed: %s", exc)
         raise RuntimeError("the coaching service could not complete the request") from exc
 
-    raw = response.choices[0].message.content or ""
+    raw = response.text or ""
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -207,7 +215,7 @@ def generate(session: Session, profile: PlayerProfile) -> CoachInsight:
         user_id=profile.user_id,
         profile_id=profile.id,
         player=profile.player,
-        model=groq_model()[:128],
+        model=gemini_model()[:128],
         summary=validated["summary"],
         focus_drill=validated["focus_drill"],
         sections=validated["sections"],

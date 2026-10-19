@@ -13,7 +13,7 @@ seeing anyone's games.
 - **Move evaluation** with Stockfish, normalised to the mover's perspective, with correct mate handling.
 - **Static exchange evaluation** for hanging-piece detection and **tactical motif** detection (mates, forks, pins, skewers).
 - **Mistake mining**: severity bands, game phase, time-pressure flags, opening-book awareness and a fixed-priority category system.
-- **Patterns, Chess DNA and Coach**: recurring categories, weak openings, evidence-only observations and optional AI coaching through Groq.
+- **Patterns, Chess DNA and Coach**: recurring categories, weak openings, evidence-only observations and optional AI coaching through Gemini.
 - **Training mode**: every stored mistake becomes a puzzle, graded on winning-chance loss. Progress survives re-analysis.
 - **Background analysis**: uploads return immediately; analysis runs in a bounded worker pool with live progress and cancel.
 - **Accounts and administration**: registration, sign-in, password change, account deletion, and an admin console.
@@ -164,7 +164,7 @@ passwords.
 - **Games**: upload a `.pgn` file. It is stored, then analysed in the background. You can leave the page and come back; progress resumes.
 - **Dashboard, Patterns, Chess DNA**: aggregate views of your mistakes.
 - **Training**: replay the position before each mistake and get graded by the engine.
-- **Coach**: optional AI summary of your profile (needs `GROQ_API_KEY`; limited per user per day).
+- **Coach**: optional AI summary of your profile (needs `GEMINI_API_KEY`; limited per user per day).
 - **Account**: change your password, download your data, delete your account.
 
 Re-analysing a single game updates that game's moves and mistakes but leaves your Chess DNA
@@ -250,7 +250,7 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 | `COACH_DAILY_LIMIT` | `10` | Coach reports per user per day. |
 | `PROFILES_KEPT_PER_USER`, `JOB_RETENTION_DAYS` | `5`, `14` | History kept. |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE` | `5`, `5`, `300` | Connection pool tuning. |
-| `GROQ_API_KEY`, `GROQ_MODEL` | none, `openai/gpt-oss-120b` | Enables Coach. |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | none, `gemini-2.5-flash` | Enables Coach. |
 | `PUZZLE_TOLERANCE` | `5.0` | Win-percentage a training answer may lose and still count as correct. |
 | `PARALLEL_WORKERS`, `VERIFY_WITH`, `BOOK_PATH`, `ANALYSIS_DIR` | see `.env.example` | Command-line defaults. |
 | `SITE_ADDRESS` | `:80` | Caddy address (compose only), e.g. your domain. |
@@ -262,10 +262,10 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 - Analysis jobs interrupted by a restart are marked failed (queued ones are resumed).
 - Heuristic tactics detection (SEE, motifs) is not a full tactics solver.
 - Time-pressure statistics need clock annotations in the PGN (Chess.com exports have them).
-- Coach output is only as good as the evidence behind it, and it sends your profile summary (not raw games) to Groq when enabled.
+- Coach output is only as good as the evidence behind it, and it sends your profile summary (not raw games) to Gemini when enabled.
 
 ## Privacy
 
 Your games are private to your account. Everything runs on your own server except Coach, which
-sends the mined profile summary to Groq only when `GROQ_API_KEY` is set. Deleting your account
+sends the mined profile summary to Gemini only when `GEMINI_API_KEY` is set. Deleting your account
 removes your games, analysis, training history and Coach reports.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import GameCard from '../components/GameCard.jsx'
 import UploadForm from '../components/UploadForm.jsx'
 import JobProgress from '../components/JobProgress.jsx'
@@ -39,12 +39,18 @@ export default function Games() {
     load()
   }, [load])
 
+  const loadRef = useRef(load)
+
+  useEffect(() => {
+    loadRef.current = load
+  }, [load])
+
   const track = useCallback(
     async (job) => {
       await follow(job)
-      await load()
+      await loadRef.current()
     },
-    [follow, load],
+    [follow],
   )
 
   useEffect(() => {

@@ -2,6 +2,8 @@
 
 **Stop reviewing games one at a time. Start finding the mistake you keep making.**
 
+[Live application](https://chesslytics.onrender.com/)
+
 Chesslytics ingests PGN games, evaluates every move with Stockfish, and mines the results for
 **recurring** weaknesses: not "you blundered on move 23" but "you hang pieces in the middlegame
 under time pressure, four games running." It is a multi-user web application: every person has
@@ -181,7 +183,7 @@ python -m app.main --pgn games.pgn --save --user alice
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--pgn` | `data/games.pgn` | PGN file to analyse |
-| `--depth` / `--limit-time` | `12` / none | Search depth, or seconds per move |
+| `--depth` / `--limit-time` | `STOCKFISH_DEPTH` (else `12`) / none | Search depth, or seconds per move |
 | `--min-loss` | `1.0` | Minimum pawn loss to report |
 | `--player` / `--color` | none / `both` | Restrict to one player or colour |
 | `--time-pressure` | `30` | Seconds below which a move counts as time-pressured |
@@ -225,8 +227,8 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `DATABASE_URL` | none | Full database URL (Neon or any Postgres). Takes priority. |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_HOST`, `POSTGRES_PORT` | none | Used when `DATABASE_URL` is empty and `POSTGRES_USER` is set. With neither, a local SQLite file is used. |
+| `DATABASE_URL` | none | Full database URL (Neon or any Postgres). Tried first. |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_HOST`, `POSTGRES_PORT` | none | Used when `DATABASE_URL` is empty, or as a fallback if it cannot connect, as long as `POSTGRES_USER` is set. With neither, a local SQLite file is used. |
 | `SECRET_KEY` | random per start | Signing key, 32 or more characters. Without it every restart signs everyone out. |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | none | Administrator created on first start. |
 | `ADMIN_RESET_PASSWORD` | `false` | One-off reset of the administrator password from `ADMIN_PASSWORD`. |

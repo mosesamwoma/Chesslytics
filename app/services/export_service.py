@@ -99,12 +99,27 @@ def mistake_row(record: dict) -> dict:
     }
 
 
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe(value):
+    if isinstance(value, str) and value.startswith(FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def mistake_rows(report: dict) -> list[dict]:
     return [mistake_row(record) for record in (report.get("mistakes") or [])]
 
 
+def csv_rows(report: dict) -> list[dict]:
+    return [
+        {key: csv_safe(value) for key, value in row.items()} for row in mistake_rows(report)
+    ]
+
+
 def write_csv(report: dict, path: Path) -> int:
-    rows = mistake_rows(report)
+    rows = csv_rows(report)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=MISTAKE_COLUMNS)
         writer.writeheader()
@@ -148,7 +163,7 @@ def render(report: dict, fmt: str) -> str:
         buffer = StringIO()
         writer = csv.DictWriter(buffer, fieldnames=MISTAKE_COLUMNS)
         writer.writeheader()
-        writer.writerows(mistake_rows(report))
+        writer.writerows(csv_rows(report))
         return buffer.getvalue()
     if chosen == "jsonl":
         return "".join(

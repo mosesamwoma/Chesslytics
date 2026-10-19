@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import threading
+from contextlib import contextmanager
 from typing import Optional
 
 import chess
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
+from app import settings
 from app.chess.engine import ChessEngine, SearchLimit, find_stockfish
 from app.chess.evaluator import clamp_loss, win_percent
 from app.database.models import Mistake, PuzzleAttempt
@@ -14,6 +17,23 @@ from app.services import analysis_service
 
 DEFAULT_TOLERANCE_WINPCT = 5.0
 WEAK_CATEGORY_MIN_ATTEMPTS = 3
+GRADING_WAIT_SECONDS = 15.0
+
+_grading_slots = threading.BoundedSemaphore(settings.max_concurrent_grading())
+
+
+class EngineBusy(RuntimeError):
+    pass
+
+
+@contextmanager
+def grading_slot():
+    if not _grading_slots.acquire(timeout=GRADING_WAIT_SECONDS):
+        raise EngineBusy("the engine is busy right now; please try again in a moment")
+    try:
+        yield
+    finally:
+        _grading_slots.release()
 
 
 def tolerance() -> float:
@@ -51,7 +71,7 @@ def best_move(board: chess.Board, mistake: Mistake) -> Optional[chess.Move]:
     return None
 
 
-def attempts_for(session: Session, mistake_ids: list[int]) -> dict[int, dict]:
+def attempts_for(session: Session, user_id: int, mistake_ids: list[int]) -> dict[int, dict]:
     if not mistake_ids:
         return {}
     rows = session.execute(
@@ -62,7 +82,7 @@ def attempts_for(session: Session, mistake_ids: list[int]) -> dict[int, dict]:
                 func.sum(case((PuzzleAttempt.correct.is_(True), 1), else_=0)), 0
             ),
         )
-        .where(PuzzleAttempt.mistake_id.in_(mistake_ids))
+        .where(PuzzleAttempt.user_id == user_id, PuzzleAttempt.mistake_id.in_(mistake_ids))
         .group_by(PuzzleAttempt.mistake_id)
     ).all()
     return {
@@ -122,11 +142,12 @@ def solution(mistake: Mistake) -> dict:
 
 
 def puzzle_query(
+    user_id: int,
     category: Optional[str] = None,
     severity: Optional[str] = None,
     player: Optional[str] = None,
 ):
-    statement = select(Mistake).where(Mistake.fen.is_not(None))
+    statement = select(Mistake).where(Mistake.user_id == user_id, Mistake.fen.is_not(None))
     if category:
         statement = statement.where(Mistake.category == category)
     if severity:
@@ -138,6 +159,7 @@ def puzzle_query(
 
 def list_puzzles(
     session: Session,
+    user_id: int,
     category: Optional[str] = None,
     severity: Optional[str] = None,
     player: Optional[str] = None,
@@ -153,12 +175,13 @@ def list_puzzles(
                 func.sum(case((PuzzleAttempt.correct.is_(True), 1), else_=0)), 0
             ).label("solved"),
         )
+        .where(PuzzleAttempt.user_id == user_id)
         .group_by(PuzzleAttempt.mistake_id)
         .subquery()
     )
     seen = func.coalesce(tally.c.attempts, 0)
 
-    statement = puzzle_query(category, severity, player).outerjoin(
+    statement = puzzle_query(user_id, category, severity, player).outerjoin(
         tally, tally.c.mistake_id == Mistake.id
     )
     if unseen_only:
@@ -187,22 +210,23 @@ def list_puzzles(
     return puzzles, total
 
 
-def get_mistake(session: Session, mistake_id: int) -> Optional[Mistake]:
-    return session.get(Mistake, mistake_id)
+def get_mistake(session: Session, user_id: int, mistake_id: int) -> Optional[Mistake]:
+    return session.scalar(
+        select(Mistake).where(Mistake.id == mistake_id, Mistake.user_id == user_id)
+    )
 
 
-def attempt_summary(session: Session, mistake_id: int) -> dict:
-    return attempts_for(session, [mistake_id]).get(
+def attempt_summary(session: Session, user_id: int, mistake_id: int) -> dict:
+    return attempts_for(session, user_id, [mistake_id]).get(
         mistake_id, {"attempts": 0, "solved": 0}
     )
 
 
 def grade(
     session: Session,
+    user_id: int,
     mistake: Mistake,
     uci: str,
-    player: Optional[str] = None,
-    engine_path: Optional[str] = None,
     limit: Optional[SearchLimit] = None,
 ) -> dict:
     board = board_for(mistake)
@@ -240,14 +264,12 @@ def grade(
     else:
         graded_by = "engine"
         try:
-            outcome = _grade_with_engine(
-                mistake, board, after, engine_path, limit, notes
-            )
+            outcome = _grade_with_engine(board, after, limit, notes)
             correct = outcome["correct"]
             verdict = outcome["verdict"]
             loss_vs_best = outcome["loss_vs_best"]
             graded_engine = outcome["engine"]
-        except FileNotFoundError:
+        except (FileNotFoundError, OSError):
             graded_by = "exact_match"
             correct, verdict = False, "not_best"
             notes.append(
@@ -275,8 +297,9 @@ def grade(
 
     session.add(
         PuzzleAttempt(
+            user_id=user_id,
             mistake_id=mistake.id,
-            player=player or mistake.player,
+            player=mistake.player,
             played_uci=played.uci(),
             played_san=played_san,
             correct=bool(correct),
@@ -287,31 +310,23 @@ def grade(
         )
     )
     session.flush()
-    result["attempts"] = attempt_summary(session, mistake.id)
+    result["attempts"] = attempt_summary(session, user_id, mistake.id)
     return result
 
 
 def _grade_with_engine(
-    mistake: Mistake,
     board: chess.Board,
     after: chess.Board,
-    engine_path: Optional[str],
     limit: Optional[SearchLimit],
     notes: list[str],
 ) -> dict:
     search = limit or analysis_service.default_limit()
-    entries = analysis_service.load_verify_cache()
 
-    with ChessEngine(find_stockfish(engine_path), search) as engine:
-        engine_name = engine.name
-        cp_before = analysis_service.position_score(
-            engine, board, entries, engine_name, search
-        )
-        cp_after = analysis_service.position_score(
-            engine, after, entries, engine_name, search
-        )
-
-    analysis_service.save_verify_cache(entries)
+    with grading_slot():
+        with ChessEngine(find_stockfish(), search) as engine:
+            engine_name = engine.name
+            cp_before = analysis_service.position_score(engine, board, {}, engine_name, search)
+            cp_after = analysis_service.position_score(engine, after, {}, engine_name, search)
 
     swing = win_percent(cp_before) - win_percent(-cp_after)
     loss_vs_best = round(max(clamp_loss(cp_before + cp_after), 0) / 100.0, 2)
@@ -335,8 +350,8 @@ def _grade_with_engine(
     }
 
 
-def stats(session: Session, player: Optional[str] = None) -> dict:
-    filters = [PuzzleAttempt.player == player] if player else []
+def stats(session: Session, user_id: int) -> dict:
+    filters = [PuzzleAttempt.user_id == user_id]
 
     total = int(
         session.scalar(select(func.count(PuzzleAttempt.id)).where(*filters)) or 0
@@ -380,11 +395,15 @@ def stats(session: Session, player: Optional[str] = None) -> dict:
     weakest = min(eligible, key=lambda row: row["accuracy"]) if eligible else None
 
     puzzles = int(
-        session.scalar(select(func.count(Mistake.id)).where(Mistake.fen.is_not(None))) or 0
+        session.scalar(
+            select(func.count(Mistake.id)).where(
+                Mistake.user_id == user_id, Mistake.fen.is_not(None)
+            )
+        )
+        or 0
     )
 
     return {
-        "player": player,
         "attempts": total,
         "correct": correct,
         "accuracy": round(100.0 * correct / total, 1) if total else 0.0,
@@ -416,10 +435,8 @@ def attempt_to_dict(attempt: PuzzleAttempt) -> dict:
     }
 
 
-def recent_attempts(session: Session, limit: int = 20, player: Optional[str] = None) -> list[PuzzleAttempt]:
-    statement = select(PuzzleAttempt)
-    if player:
-        statement = statement.where(PuzzleAttempt.player == player)
+def recent_attempts(session: Session, user_id: int, limit: int = 20) -> list[PuzzleAttempt]:
+    statement = select(PuzzleAttempt).where(PuzzleAttempt.user_id == user_id)
     statement = statement.order_by(
         PuzzleAttempt.created_at.desc(), PuzzleAttempt.id.desc()
     ).limit(max(1, min(limit, 200)))

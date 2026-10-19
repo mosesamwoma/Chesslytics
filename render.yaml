@@ -2,20 +2,26 @@ services:
   - type: web
     name: chesslytics
     runtime: docker
-    plan: free            
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
         sync: false
-      - key: AUTH_USERNAME
+      - key: ADMIN_USERNAME
         sync: false
-      - key: AUTH_PASSWORD
+      - key: ADMIN_PASSWORD
         sync: false
-      - key: AUTH_SECRET
+      - key: SECRET_KEY
         generateValue: true
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      - key: ALLOW_REGISTRATION
+        value: "true"
       - key: STOCKFISH_DEPTH
         value: "12"
+      - key: MAX_CONCURRENT_JOBS
+        value: "1"
       - key: GROQ_API_KEY
         sync: false

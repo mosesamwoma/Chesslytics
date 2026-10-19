@@ -327,6 +327,11 @@ p {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+a.button {
+  display: inline-block;
+  text-decoration: none;
+}
+
 .button {
   border: 1px solid var(--border);
   background: var(--surface-1);
@@ -744,4 +749,13 @@ select {
 .kv dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+
+progress {
+  accent-color: var(--series-1);
+  height: 8px;
+}
+
+.nav a.button.active {
+  background: var(--page);
 }

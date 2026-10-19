@@ -1,6 +1,6 @@
-import { AUTH_EVENT, clearToken, getToken } from './session.js'
-
 const BASE = import.meta.env.VITE_API_BASE || ''
+
+export const AUTH_EVENT = 'chesslytics:session-expired'
 
 async function parse(response) {
   const text = await response.text()
@@ -12,22 +12,33 @@ async function parse(response) {
   }
 }
 
+function messageFrom(body, fallback) {
+  const detail = body && body.detail ? body.detail : fallback
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item.msg || JSON.stringify(item)).join('; ')
+  }
+  return JSON.stringify(detail)
+}
+
 export async function request(path, options = {}) {
-  const { anonymous = false, ...init } = options
+  const { quiet = false, ...init } = options
   const headers = new Headers(init.headers || {})
-  const token = anonymous ? null : getToken()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(`${BASE}${path}`, { ...init, headers })
+  headers.set('X-CSRF-Protection', '1')
+  const response = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers,
+    credentials: BASE ? 'include' : 'same-origin',
+  })
   const body = await parse(response)
   if (!response.ok) {
-    if (response.status === 401 && token) {
-      clearToken()
+    if (response.status === 401 && !quiet) {
       window.dispatchEvent(new Event(AUTH_EVENT))
     }
-    const detail = body && body.detail ? body.detail : response.statusText
-    const error = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+    const error = new Error(messageFrom(body, response.statusText))
     error.status = response.status
     error.body = body
+    error.retryAfter = Number(response.headers.get('Retry-After')) || null
     throw error
   }
   return body
@@ -45,12 +56,25 @@ export function post(path, payload) {
   })
 }
 
+export function patch(path, payload) {
+  return request(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  })
+}
+
 export function postForm(path, formData) {
   return request(path, { method: 'POST', body: formData })
 }
 
-export function del(path) {
-  return request(path, { method: 'DELETE' })
+export function del(path, payload) {
+  if (payload === undefined) return request(path, { method: 'DELETE' })
+  return request(path, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 export { BASE }

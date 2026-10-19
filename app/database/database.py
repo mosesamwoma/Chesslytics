@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import time
@@ -9,9 +10,14 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote_plus
 
-from sqlalchemy import Engine, create_engine, inspect, text
+from sqlalchemy import Engine, create_engine, event, inspect, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from app import settings
+
+logger = logging.getLogger("chesslytics")
 
 DEFAULT_POSTGRES_USER = "postgres"
 DEFAULT_POSTGRES_PASSWORD = ""
@@ -20,6 +26,15 @@ DEFAULT_POSTGRES_PORT = "5432"
 DEFAULT_SQLITE_URL = "sqlite:///./data/chess_mistakes.db"
 INIT_DB_RETRIES = 15
 INIT_DB_RETRY_DELAY = 2.0
+ADVISORY_LOCK_KEY = 727274201
+
+USER_OWNED_TABLES = (
+    "games",
+    "mistakes",
+    "puzzle_attempts",
+    "player_profiles",
+    "coach_insights",
+)
 
 _engine: Optional[Engine] = None
 _session_factory: Optional[sessionmaker] = None
@@ -40,15 +55,15 @@ def _resolve_postgres_host(explicit: Optional[str]) -> str:
 
 
 def _postgres_url_from_env() -> str:
-    user = os.environ.get("POSTGRES_USER", DEFAULT_POSTGRES_USER)
+    user = os.environ.get("POSTGRES_USER", "").strip() or DEFAULT_POSTGRES_USER
     password = os.environ.get("POSTGRES_PASSWORD", DEFAULT_POSTGRES_PASSWORD)
-    db = os.environ.get("POSTGRES_DB", DEFAULT_POSTGRES_DB)
-    port = os.environ.get("POSTGRES_PORT", DEFAULT_POSTGRES_PORT)
-    host = _resolve_postgres_host(os.environ.get("POSTGRES_HOST"))
+    db = os.environ.get("POSTGRES_DB", "").strip() or DEFAULT_POSTGRES_DB
+    port = os.environ.get("POSTGRES_PORT", "").strip() or DEFAULT_POSTGRES_PORT
+    host = _resolve_postgres_host(os.environ.get("POSTGRES_HOST", "").strip() or None)
     credentials = quote_plus(user)
     if password:
         credentials = f"{credentials}:{quote_plus(password)}"
-    return f"postgresql+psycopg2://{credentials}@{host}:{port}/{db}"
+    return f"postgresql+psycopg2://{credentials}@{host}:{port}/{quote_plus(db)}"
 
 
 def _normalize_url(url: str) -> str:
@@ -59,20 +74,20 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-def database_urls() -> list[str]:
-    urls: list[str] = []
+def database_url() -> str:
     explicit = os.environ.get("DATABASE_URL", "").strip()
     if explicit:
-        urls.append(_normalize_url(explicit))
-    if os.environ.get("POSTGRES_DB") or os.environ.get("POSTGRES_USER"):
-        urls.append(_postgres_url_from_env())
-    if not urls:
-        urls.append(DEFAULT_SQLITE_URL)
-    return list(dict.fromkeys(urls))
+        return _normalize_url(explicit)
+    if os.environ.get("POSTGRES_USER", "").strip():
+        return _postgres_url_from_env()
+    return DEFAULT_SQLITE_URL
 
 
-def database_url() -> str:
-    return database_urls()[0]
+def describe_url(url: str) -> str:
+    try:
+        return make_url(url).render_as_string(hide_password=True)
+    except Exception:
+        return "unparseable database url"
 
 
 def _sqlite_file(url: str) -> Optional[Path]:
@@ -85,21 +100,41 @@ def _sqlite_file(url: str) -> Optional[Path]:
     return Path(raw).expanduser()
 
 
-def _connect_args(url: str) -> dict:
-    path = _sqlite_file(url)
-    if path is None:
-        return {}
-    if str(path.parent) not in ("", "."):
-        path.parent.mkdir(parents=True, exist_ok=True)
-    return {"check_same_thread": False}
+def _is_sqlite(url: str) -> bool:
+    return url.startswith("sqlite:")
 
 
 def _build_engine(url: str) -> Engine:
+    if _is_sqlite(url):
+        path = _sqlite_file(url)
+        if path is not None and str(path.parent) not in ("", "."):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False, "timeout": 30},
+            future=True,
+            pool_pre_ping=True,
+        )
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragmas(dbapi_connection, _record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            if path is not None:
+                cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.close()
+
+        return engine
+
     return create_engine(
         url,
-        connect_args=_connect_args(url),
         future=True,
         pool_pre_ping=True,
+        pool_recycle=settings.env_int("DB_POOL_RECYCLE", 300, minimum=30),
+        pool_size=settings.env_int("DB_POOL_SIZE", 5, minimum=1, maximum=50),
+        max_overflow=settings.env_int("DB_MAX_OVERFLOW", 5, minimum=0, maximum=50),
+        connect_args={"connect_timeout": settings.env_int("DB_CONNECT_TIMEOUT", 15, minimum=1)},
     )
 
 
@@ -152,6 +187,7 @@ def ensure_columns() -> list[str]:
     engine = get_engine()
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
+    preparer = engine.dialect.identifier_preparer
     added: list[str] = []
 
     for table in ModelBase.metadata.sorted_tables:
@@ -170,8 +206,8 @@ def ensure_columns() -> list[str]:
                 kind = column.type.compile(engine.dialect)
                 connection.execute(
                     text(
-                        f'ALTER TABLE "{table.name}" '
-                        f'ADD COLUMN "{column.name}" {kind}'
+                        f"ALTER TABLE {preparer.quote(table.name)} "
+                        f"ADD COLUMN {preparer.quote(column.name)} {kind}"
                     )
                 )
                 added.append(f"{table.name}.{column.name}")
@@ -179,27 +215,56 @@ def ensure_columns() -> list[str]:
     return added
 
 
+def migrate_schema() -> list[str]:
+    engine = get_engine()
+    inspector = inspect(engine)
+    applied: list[str] = []
+
+    with engine.begin() as connection:
+        for index in inspector.get_indexes("games"):
+            if index.get("name") == "ix_games_fingerprint" and index.get("unique"):
+                connection.execute(text("DROP INDEX IF EXISTS ix_games_fingerprint"))
+                applied.append("dropped unique index ix_games_fingerprint")
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_games_fingerprint ON games (fingerprint)")
+        )
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_games_user_fingerprint "
+                "ON games (user_id, fingerprint)"
+            )
+        )
+        for table in USER_OWNED_TABLES:
+            connection.execute(
+                text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id)")
+            )
+
+    return applied
+
+
 def _connect_first_available() -> Engine:
     global _engine, _session_factory
-    urls = database_urls()
+    url = database_url()
     last_error: Optional[OperationalError] = None
     for attempt in range(1, INIT_DB_RETRIES + 1):
-        for url in urls:
-            candidate = _build_engine(url)
-            try:
-                with candidate.connect():
-                    pass
-            except OperationalError as exc:
-                last_error = exc
-                candidate.dispose()
-                continue
-            if _engine is not None:
-                _engine.dispose()
-            _engine = candidate
-            _session_factory = None
-            return candidate
-        if attempt < INIT_DB_RETRIES:
-            time.sleep(INIT_DB_RETRY_DELAY)
+        candidate = _build_engine(url)
+        try:
+            with candidate.connect():
+                pass
+        except OperationalError as exc:
+            last_error = exc
+            candidate.dispose()
+            if attempt < INIT_DB_RETRIES:
+                logger.warning(
+                    "database not reachable (attempt %s/%s), retrying", attempt, INIT_DB_RETRIES
+                )
+                time.sleep(INIT_DB_RETRY_DELAY)
+            continue
+        if _engine is not None:
+            _engine.dispose()
+        _engine = candidate
+        _session_factory = None
+        return candidate
     if last_error is not None:
         raise last_error
     raise RuntimeError("no database url configured")
@@ -209,5 +274,20 @@ def init_db() -> None:
     from app.database.models import Base as ModelBase
 
     engine = _connect_first_available()
-    ModelBase.metadata.create_all(bind=engine)
-    ensure_columns()
+    logger.info("database ready: %s", describe_url(str(engine.url)))
+    lock_connection = None
+    try:
+        if engine.dialect.name == "postgresql":
+            lock_connection = engine.connect()
+            lock_connection.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": ADVISORY_LOCK_KEY}
+            )
+        ModelBase.metadata.create_all(bind=engine)
+        ensure_columns()
+        migrate_schema()
+    finally:
+        if lock_connection is not None:
+            try:
+                lock_connection.rollback()
+            finally:
+                lock_connection.close()

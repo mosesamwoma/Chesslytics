@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -22,11 +23,78 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Game(Base):
-    __tablename__ = "games"
+class User(Base):
+    __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    fingerprint: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(32))
+    username_key: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(16), default="user", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    actor_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    actor_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    action: Mapped[str] = mapped_column(String(48), index=True)
+    target: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    detail: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+
+class AnalysisJob(Base):
+    __tablename__ = "analysis_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    total_games: Mapped[int] = mapped_column(Integer, default=0)
+    done_games: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class Game(Base):
+    __tablename__ = "games"
+    __table_args__ = (
+        Index("uq_games_user_fingerprint", "user_id", "fingerprint", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     white: Mapped[str] = mapped_column(String(128), default="")
     black: Mapped[str] = mapped_column(String(128), default="")
     result: Mapped[str] = mapped_column(String(16), default="")
@@ -102,6 +170,9 @@ class Mistake(Base):
     __tablename__ = "mistakes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
     game_id: Mapped[int] = mapped_column(
         ForeignKey("games.id", ondelete="CASCADE"), index=True
     )
@@ -148,6 +219,9 @@ class PuzzleAttempt(Base):
     __tablename__ = "puzzle_attempts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
     mistake_id: Mapped[int] = mapped_column(
         ForeignKey("mistakes.id", ondelete="CASCADE"), index=True
     )
@@ -168,6 +242,9 @@ class PlayerProfile(Base):
     __tablename__ = "player_profiles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
     player: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     color: Mapped[str] = mapped_column(String(8), default="both")
     games_analyzed: Mapped[int] = mapped_column(Integer, default=0)
@@ -207,6 +284,9 @@ class CoachInsight(Base):
     __tablename__ = "coach_insights"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
     profile_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("player_profiles.id", ondelete="CASCADE"), index=True, nullable=True
     )

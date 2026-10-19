@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AnalysisChart from '../components/AnalysisChart.jsx'
 import ChessBoard, { squareFromUci } from '../components/ChessBoard.jsx'
+import JobProgress from '../components/JobProgress.jsx'
 import MistakeCard from '../components/MistakeCard.jsx'
+import useJobRunner from '../hooks/useJobRunner.js'
 import { getAnalyzedGame, runAnalysis } from '../services/analysisService.js'
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
@@ -15,6 +17,7 @@ export default function GameAnalysis() {
   const [busy, setBusy] = useState(false)
   const [ply, setPly] = useState(1)
   const [perspective, setPerspective] = useState('white')
+  const runner = useJobRunner()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -44,19 +47,27 @@ export default function GameAnalysis() {
     [mistakes],
   )
 
-  const current = indexed.get(ply)
-  const fen = current?.fen_before || moves[moves.length - 1]?.fen_after || START_FEN
-  const selected = mistakePlies.get(ply)
+  const lastPly = moves.length ? moves[moves.length - 1].ply : 1
+  const atEnd = moves.length > 0 && ply > lastPly
+  const current = atEnd ? undefined : indexed.get(ply)
+  const fen = atEnd
+    ? moves[moves.length - 1].fen_after || START_FEN
+    : current?.fen_before || START_FEN
+  const selected = atEnd ? undefined : mistakePlies.get(ply)
 
   const analyze = async () => {
     setBusy(true)
     setError(null)
     try {
-      await runAnalysis({ game_ids: [Number(gameId)], use_cache: true })
-      await load()
+      const { job } = await runAnalysis({
+        game_ids: [Number(gameId)],
+        update_profile: false,
+      })
+      setBusy(false)
+      const finished = await runner.follow(job)
+      if (finished && finished.status === 'done') await load()
     } catch (err) {
       setError(err)
-    } finally {
       setBusy(false)
     }
   }
@@ -91,15 +102,32 @@ export default function GameAnalysis() {
           <Link className="button" to="/games">
             Back
           </Link>
-          <button type="button" className="button" onClick={analyze} disabled={busy}>
-            {busy ? 'Analyzing…' : moves.length ? 'Re-analyze' : 'Analyze this game'}
+          <button
+            type="button"
+            className="button"
+            onClick={analyze}
+            disabled={busy || runner.running}
+          >
+            {busy || runner.running
+              ? 'Analyzing…'
+              : moves.length
+                ? 'Re-analyze'
+                : 'Analyze this game'}
           </button>
         </div>
       </div>
 
-      {error ? (
+      <JobProgress job={runner.job} onCancel={runner.cancel} />
+
+      {runner.job && runner.job.status === 'failed' ? (
         <div className="notice error" style={{ marginBottom: 16 }}>
-          {error.message}
+          {runner.job.error || 'The analysis failed.'}
+        </div>
+      ) : null}
+
+      {error || runner.error ? (
+        <div className="notice error" style={{ marginBottom: 16 }}>
+          {(error || runner.error).message}
         </div>
       ) : null}
 
@@ -144,19 +172,19 @@ export default function GameAnalysis() {
                   <button
                     type="button"
                     className="button"
-                    onClick={() =>
-                      setPly((value) => Math.min(moves[moves.length - 1].ply, value + 1))
-                    }
-                    disabled={ply >= moves[moves.length - 1].ply}
+                    onClick={() => setPly((value) => Math.min(lastPly + 1, value + 1))}
+                    disabled={ply >= lastPly + 1}
                   >
                     &rarr;
                   </button>
                   <span>
-                    {current
-                      ? `Move ${current.move_number}${
-                          current.color === 'white' ? '.' : '...'
-                        } ${current.san || '—'}`
-                      : 'Starting position'}
+                    {atEnd
+                      ? 'Final position'
+                      : current
+                        ? `Move ${current.move_number}${
+                            current.color === 'white' ? '.' : '...'
+                          } ${current.san || '—'}`
+                        : 'Starting position'}
                   </span>
                   {selected ? <span className="badge">mistake here</span> : null}
                 </div>
@@ -178,6 +206,14 @@ export default function GameAnalysis() {
                       {mistakePlies.has(move.ply) ? ' ●' : ''}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className={atEnd ? 'button primary' : 'button'}
+                    style={{ justifyContent: 'flex-start', textAlign: 'left' }}
+                    onClick={() => setPly(lastPly + 1)}
+                  >
+                    Final position
+                  </button>
                 </div>
               </div>
             </div>

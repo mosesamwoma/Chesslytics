@@ -55,6 +55,7 @@ def evaluate_move(
     node: chess.pgn.GameNode,
     engine: Engine,
     limit: SearchLimit,
+    carry: Optional[dict] = None,
 ) -> dict:
     move = node.move
     color = board.turn
@@ -81,7 +82,13 @@ def evaluate_move(
     try:
         record["hanging_before"] = hanging_before(board, color)
         record["motifs_before"] = detect_motifs(board, color)
-        info_before = engine.analyse(board, engine_limit)
+        info_before = None
+        if carry and carry.get("fen") == record["fen_before"]:
+            info_before = carry.get("info")
+        if carry is not None:
+            carry.clear()
+        if info_before is None:
+            info_before = engine.analyse(board, engine_limit)
         eval_before, mate_before = score_to_cp(info_before["score"], color)
         pv = info_before.get("pv") or []
         best_move = pv[0] if pv else None
@@ -99,6 +106,9 @@ def evaluate_move(
             else:
                 info_after = engine.analyse(board, engine_limit)
                 eval_after, mate_after = score_to_cp(info_after["score"], color)
+                if carry is not None:
+                    carry["fen"] = record["fen_after"]
+                    carry["info"] = info_after
 
             record["hanging_after"] = find_hanging_pieces(board, color)
             record["motifs_allowed"] = detect_motifs(board, board.turn)
@@ -142,6 +152,7 @@ def evaluate_move(
 def evaluate_game(game: chess.pgn.Game, engine: Engine, limit: SearchLimit) -> dict:
     board = game.board()
     moves: list[dict] = []
+    carry: dict = {}
 
     for node in game.mainline():
         if node.move is None:
@@ -160,7 +171,7 @@ def evaluate_game(game: chess.pgn.Game, engine: Engine, limit: SearchLimit) -> d
             )
             break
 
-        moves.append(evaluate_move(board, node, engine, limit))
+        moves.append(evaluate_move(board, node, engine, limit, carry))
         board.push(node.move)
 
     return {

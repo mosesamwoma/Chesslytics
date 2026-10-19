@@ -1,27 +1,30 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { fetchMe, fetchStatus, login as loginRequest } from '../services/authService.js'
-import { AUTH_EVENT, clearToken, getToken, setToken } from '../services/session.js'
+import { AUTH_EVENT } from '../services/api.js'
+import {
+  fetchMe,
+  fetchStatus,
+  login as loginRequest,
+  logout as logoutRequest,
+  register as registerRequest,
+} from '../services/authService.js'
 
 export const AuthContext = createContext(null)
 
-async function resolveStatus() {
+async function resolveSession() {
   const info = await fetchStatus()
-  if (!info.enabled) return 'open'
-  if (!getToken()) return 'anonymous'
   try {
-    await fetchMe()
-    return 'authenticated'
+    const me = await fetchMe()
+    return { status: 'authenticated', user: me.user, info }
   } catch (err) {
-    if (err.status === 401) {
-      clearToken()
-      return 'anonymous'
-    }
+    if (err.status === 401) return { status: 'anonymous', user: null, info }
     throw err
   }
 }
 
 export function AuthProvider({ children }) {
   const [status, setStatus] = useState('loading')
+  const [user, setUser] = useState(null)
+  const [info, setInfo] = useState({ registration_enabled: false, min_password_length: 10 })
   const [error, setError] = useState(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -29,15 +32,17 @@ export function AuthProvider({ children }) {
     let active = true
     setStatus('loading')
     setError(null)
-    resolveStatus()
+    resolveSession()
       .then((next) => {
-        if (active) setStatus(next)
+        if (!active) return
+        setUser(next.user)
+        setInfo(next.info)
+        setStatus(next.status)
       })
       .catch((err) => {
-        if (active) {
-          setError(err)
-          setStatus('error')
-        }
+        if (!active) return
+        setError(err)
+        setStatus('error')
       })
     return () => {
       active = false
@@ -45,27 +50,42 @@ export function AuthProvider({ children }) {
   }, [attempt])
 
   useEffect(() => {
-    const expired = () => setStatus((current) => (current === 'open' ? current : 'anonymous'))
+    const expired = () => {
+      setUser(null)
+      setStatus('anonymous')
+    }
     window.addEventListener(AUTH_EVENT, expired)
     return () => window.removeEventListener(AUTH_EVENT, expired)
   }, [])
 
   const login = useCallback(async (username, password) => {
     const result = await loginRequest(username, password)
-    setToken(result.token)
+    setUser(result.user)
     setStatus('authenticated')
   }, [])
 
-  const logout = useCallback(() => {
-    clearToken()
+  const register = useCallback(async (username, password) => {
+    const result = await registerRequest(username, password)
+    setUser(result.user)
+    setStatus('authenticated')
+  }, [])
+
+  const logout = useCallback(async () => {
+    await logoutRequest().catch(() => null)
+    setUser(null)
+    setStatus('anonymous')
+  }, [])
+
+  const endSession = useCallback(() => {
+    setUser(null)
     setStatus('anonymous')
   }, [])
 
   const retry = useCallback(() => setAttempt((value) => value + 1), [])
 
   const value = useMemo(
-    () => ({ status, error, login, logout, retry }),
-    [status, error, login, logout, retry],
+    () => ({ status, user, info, error, login, register, logout, endSession, retry }),
+    [status, user, info, error, login, register, logout, endSession, retry],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

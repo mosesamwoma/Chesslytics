@@ -21,7 +21,7 @@ function storedTheme() {
 
 export default function NavBar() {
   const [theme, setTheme] = useState(() => storedTheme() || 'system')
-  const { status, logout } = useAuth()
+  const { status, user, logout } = useAuth()
 
   useEffect(() => {
     const root = document.documentElement
@@ -62,9 +62,19 @@ export default function NavBar() {
         Theme: {theme}
       </button>
       {status === 'authenticated' ? (
-        <button type="button" className="button" onClick={logout}>
-          Sign out
-        </button>
+        <>
+          {user?.is_admin ? (
+            <NavLink to="/admin" className="button">
+              Admin
+            </NavLink>
+          ) : null}
+          <NavLink to="/account" className="button" title="Account settings">
+            {user?.username}
+          </NavLink>
+          <button type="button" className="button" onClick={logout}>
+            Sign out
+          </button>
+        </>
       ) : null}
     </nav>
   )

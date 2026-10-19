@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import GameCard from '../components/GameCard.jsx'
 import UploadForm from '../components/UploadForm.jsx'
+import JobProgress from '../components/JobProgress.jsx'
+import useJobRunner from '../hooks/useJobRunner.js'
 import { deleteGame, listGames } from '../services/gamesService.js'
-import { runAnalysis } from '../services/analysisService.js'
+import { isFinished, listJobs, runAnalysis } from '../services/analysisService.js'
 
 const PAGE_SIZE = 20
 
@@ -12,7 +14,8 @@ export default function Games() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState(null)
+  const runner = useJobRunner()
+  const { follow } = runner
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -36,23 +39,43 @@ export default function Games() {
     load()
   }, [load])
 
+  const track = useCallback(
+    async (job) => {
+      await follow(job)
+      await load()
+    },
+    [follow, load],
+  )
+
+  useEffect(() => {
+    let active = true
+    listJobs(1)
+      .then(({ jobs }) => {
+        const latest = jobs[0]
+        if (active && latest && !isFinished(latest)) track(latest)
+      })
+      .catch(() => null)
+    return () => {
+      active = false
+    }
+  }, [track])
+
   const analyzeAll = async () => {
     setBusy(true)
-    setMessage(null)
     setError(null)
     try {
-      const report = await runAnalysis({ use_cache: true })
-      setMessage(
-        `Analyzed ${report.counts?.games_analyzed ?? 0} new games, reused ${
-          report.counts?.games_reused ?? 0
-        } from cache, found ${report.mistakes?.length ?? 0} mistakes.`,
-      )
-      await load()
+      const { job } = await runAnalysis({})
+      setBusy(false)
+      await track(job)
     } catch (err) {
       setError(err)
-    } finally {
       setBusy(false)
     }
+  }
+
+  const uploaded = (summary) => {
+    load()
+    if (summary.job) track(summary.job)
   }
 
   const remove = async (game) => {
@@ -78,16 +101,40 @@ export default function Games() {
             fingerprint of the headers and moves.
           </p>
         </div>
-        <button type="button" className="button" onClick={analyzeAll} disabled={busy || !total}>
-          {busy ? 'Analyzing…' : 'Analyze stored games'}
+        <button
+          type="button"
+          className="button"
+          onClick={analyzeAll}
+          disabled={busy || runner.running || !total}
+        >
+          {busy ? 'Starting…' : 'Analyze stored games'}
         </button>
       </div>
 
-      <UploadForm onComplete={load} />
+      <UploadForm onUploaded={uploaded} disabled={runner.running} />
 
-      {message ? (
-        <div className="notice good" style={{ marginTop: 16 }}>
-          {message}
+      <JobProgress job={runner.job} onCancel={runner.cancel} />
+
+      {runner.job && runner.job.status === 'done' && runner.job.summary ? (
+        <div className="notice good" style={{ marginTop: 12 }}>
+          Analyzed {runner.job.summary.games_analyzed} games &middot;{' '}
+          {runner.job.summary.mistakes} mistakes &middot; {runner.job.summary.moves_scored} moves
+          evaluated
+          {runner.job.summary.player_not_found
+            ? ' · that player name did not match any game'
+            : ''}
+        </div>
+      ) : null}
+
+      {runner.job && runner.job.status === 'failed' ? (
+        <div className="notice error" style={{ marginTop: 12 }}>
+          {runner.job.error || 'The analysis failed.'}
+        </div>
+      ) : null}
+
+      {runner.error ? (
+        <div className="notice error" style={{ marginTop: 12 }}>
+          {runner.error.message}
         </div>
       ) : null}
 

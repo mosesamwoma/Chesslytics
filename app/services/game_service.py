@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -9,25 +7,32 @@ import chess.pgn
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.chess.pgn_parser import game_metadata, load_games, parse_pgn
+from app import settings
+from app.chess.pgn_parser import game_metadata, parse_pgn
 from app.database.models import Game, Mistake, Move
 
 ALLOWED_SUFFIXES = {".pgn", ".txt"}
-MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 EMPTY_HEADERS = {"", "?", "-"}
 
 
-def upload_dir() -> Path:
-    path = Path(os.environ.get("UPLOAD_DIR", "data/uploads")).expanduser()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+class QuotaExceeded(ValueError):
+    pass
 
 
-def _clean(value: Optional[str]) -> Optional[str]:
+def fit(value: Optional[str], length: int) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).replace("\x00", "")
+    return text[:length]
+
+
+def _clean(value: Optional[str], length: int = 255) -> Optional[str]:
     if value is None:
         return None
     text = str(value).strip()
-    return None if text in EMPTY_HEADERS else text
+    if text in EMPTY_HEADERS:
+        return None
+    return fit(text, length)
 
 
 def _int_or_none(value: Optional[str]) -> Optional[int]:
@@ -35,9 +40,12 @@ def _int_or_none(value: Optional[str]) -> Optional[int]:
     if text is None:
         return None
     try:
-        return int(text)
+        number = int(text)
     except ValueError:
         return None
+    if number < 0 or number > 10000:
+        return None
+    return number
 
 
 def safe_filename(filename: str) -> str:
@@ -46,19 +54,7 @@ def safe_filename(filename: str) -> str:
     cleaned = cleaned.strip().lstrip(".") or "upload"
     if Path(cleaned).suffix.lower() not in ALLOWED_SUFFIXES:
         raise ValueError("only .pgn or .txt files are accepted")
-    return cleaned
-
-
-def save_upload(filename: str, content: bytes) -> Path:
-    if not content:
-        raise ValueError("the uploaded file is empty")
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise ValueError(f"the uploaded file exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB")
-    name = safe_filename(filename)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-    target = upload_dir() / f"{stamp}-{name}"
-    target.write_bytes(content)
-    return target
+    return cleaned[:200]
 
 
 def pgn_text(game: chess.pgn.Game) -> Optional[str]:
@@ -71,88 +67,177 @@ def pgn_text(game: chess.pgn.Game) -> Optional[str]:
 
 
 def game_row(
-    metadata: dict, source: Optional[str] = None, pgn: Optional[str] = None
+    metadata: dict,
+    user_id: Optional[int] = None,
+    source: Optional[str] = None,
+    pgn: Optional[str] = None,
 ) -> Game:
     return Game(
+        user_id=user_id,
         fingerprint=metadata["fingerprint"],
-        white=metadata.get("white") or "",
-        black=metadata.get("black") or "",
-        result=metadata.get("result") or "",
-        date=_clean(metadata.get("date")),
+        white=fit(metadata.get("white") or "", 128),
+        black=fit(metadata.get("black") or "", 128),
+        result=fit(metadata.get("result") or "", 16),
+        date=_clean(metadata.get("date"), 32),
         event=_clean(metadata.get("event")),
         site=_clean(metadata.get("site")),
-        eco=_clean(metadata.get("eco")),
+        eco=_clean(metadata.get("eco"), 8),
         opening=_clean(metadata.get("opening")),
         variation=_clean(metadata.get("variation")),
-        time_control=_clean(metadata.get("time_control")),
+        time_control=_clean(metadata.get("time_control"), 32),
         white_elo=_int_or_none(metadata.get("white_elo")),
         black_elo=_int_or_none(metadata.get("black_elo")),
-        source=source,
+        source=fit(source, 255),
         pgn=pgn,
     )
 
 
+def plies_in(game: chess.pgn.Game) -> int:
+    return sum(1 for _ in game.mainline_moves())
+
+
+def count_games(session: Session, user_id: int) -> int:
+    return int(
+        session.scalar(select(func.count(Game.id)).where(Game.user_id == user_id)) or 0
+    )
+
+
 def store_games(
-    session: Session, games: list[chess.pgn.Game], source: Optional[str] = None
+    session: Session,
+    user_id: int,
+    games: list[chess.pgn.Game],
+    source: Optional[str] = None,
+    quota: Optional[int] = None,
 ) -> dict:
     stored = 0
     skipped = 0
     fingerprints: list[str] = []
+    metas = [game_metadata(game) for game in games]
+    wanted = list({meta["fingerprint"] for meta in metas})
 
-    for game in games:
-        metadata = game_metadata(game)
-        fingerprint = metadata["fingerprint"]
-        exists = session.scalar(select(Game.id).where(Game.fingerprint == fingerprint))
-        if exists is not None:
+    known: set[str] = set()
+    for start in range(0, len(wanted), 500):
+        chunk = wanted[start : start + 500]
+        known.update(
+            session.scalars(
+                select(Game.fingerprint).where(
+                    Game.user_id == user_id, Game.fingerprint.in_(chunk)
+                )
+            )
+        )
+
+    seen: set[str] = set()
+    fresh: list[tuple[dict, chess.pgn.Game]] = []
+    for meta, game in zip(metas, games):
+        fingerprint = meta["fingerprint"]
+        fingerprints.append(fingerprint)
+        if fingerprint in known or fingerprint in seen:
             skipped += 1
             continue
-        session.add(game_row(metadata, source, pgn_text(game)))
-        fingerprints.append(fingerprint)
+        seen.add(fingerprint)
+        fresh.append((meta, game))
+
+    if quota is not None and fresh:
+        room = quota - count_games(session, user_id)
+        if len(fresh) > room:
+            raise QuotaExceeded(
+                f"your library is limited to {quota} games; "
+                f"you can add {max(room, 0)} more (delete old games to free space)"
+            )
+
+    for meta, game in fresh:
+        session.add(game_row(meta, user_id, source, pgn_text(game)))
         stored += 1
 
     session.flush()
-    return {"stored": stored, "skipped": skipped, "fingerprints": fingerprints}
+    return {
+        "stored": stored,
+        "skipped": skipped,
+        "fingerprints": list(dict.fromkeys(fingerprints)),
+    }
 
 
 def import_pgn(
     session: Session,
-    text: Optional[str] = None,
-    path: Optional[str] = None,
+    user_id: int,
+    text: str,
     source: Optional[str] = None,
+    quota: Optional[int] = None,
 ) -> dict:
-    if text is not None:
-        games, errors = parse_pgn(text)
-    elif path is not None:
-        games, errors = load_games(path)
-    else:
-        raise ValueError("either text or path is required")
+    games, errors = parse_pgn(text)
+    limit = settings.max_games_per_upload()
+    if len(games) > limit:
+        raise ValueError(
+            f"too many games in one file ({len(games)}); the limit is {limit} per upload"
+        )
+    longest = settings.max_plies_per_game()
+    usable: list[chess.pgn.Game] = []
+    for index, game in enumerate(games, start=1):
+        if plies_in(game) > longest:
+            errors.append(f"game #{index}: skipped (longer than {longest} half-moves)")
+            continue
+        usable.append(game)
 
-    result = store_games(session, games, source)
-    result["parsed"] = len(games)
-    result["errors"] = errors
+    result = store_games(session, user_id, usable, source, quota)
+    result["parsed"] = len(usable)
+    result["errors"] = errors[:50]
     return result
 
 
-def list_games(session: Session, limit: int = 100, offset: int = 0) -> list[Game]:
+def _counts(session: Session, ids: list[int]) -> tuple[dict, dict]:
+    if not ids:
+        return {}, {}
+    moves = dict(
+        session.execute(
+            select(Move.game_id, func.count(Move.id))
+            .where(Move.game_id.in_(ids))
+            .group_by(Move.game_id)
+        ).all()
+    )
+    mistakes = dict(
+        session.execute(
+            select(Mistake.game_id, func.count(Mistake.id))
+            .where(Mistake.game_id.in_(ids))
+            .group_by(Mistake.game_id)
+        ).all()
+    )
+    return moves, mistakes
+
+
+def list_games(session: Session, user_id: int, limit: int = 100, offset: int = 0) -> list[dict]:
     statement = (
         select(Game)
+        .where(Game.user_id == user_id)
         .order_by(Game.date.desc().nullslast(), Game.id.desc())
         .limit(max(1, min(limit, 500)))
         .offset(max(0, offset))
     )
-    return list(session.scalars(statement))
+    rows = list(session.scalars(statement))
+    moves, mistakes = _counts(session, [row.id for row in rows])
+    return [
+        game_summary(row, int(mistakes.get(row.id, 0)), int(moves.get(row.id, 0)))
+        for row in rows
+    ]
 
 
-def count_games(session: Session) -> int:
-    return int(session.scalar(select(func.count(Game.id))) or 0)
+def get_game(session: Session, user_id: int, game_id: int) -> Optional[Game]:
+    return session.scalar(select(Game).where(Game.id == game_id, Game.user_id == user_id))
 
 
-def get_game(session: Session, game_id: int) -> Optional[Game]:
-    return session.get(Game, game_id)
+def games_by_fingerprint(session: Session, user_id: int, fingerprints: list[str]) -> list[Game]:
+    rows: list[Game] = []
+    for start in range(0, len(fingerprints), 500):
+        chunk = fingerprints[start : start + 500]
+        rows.extend(
+            session.scalars(
+                select(Game).where(Game.user_id == user_id, Game.fingerprint.in_(chunk))
+            )
+        )
+    return rows
 
 
-def delete_game(session: Session, game_id: int) -> bool:
-    game = session.get(Game, game_id)
+def delete_game(session: Session, user_id: int, game_id: int) -> bool:
+    game = get_game(session, user_id, game_id)
     if game is None:
         return False
     session.delete(game)
@@ -209,7 +294,9 @@ def _move_row(game_id: int, move: dict) -> Move:
     )
 
 
-def game_summary(game: Game, mistake_count: Optional[int] = None) -> dict:
+def game_summary(
+    game: Game, mistake_count: Optional[int] = None, move_count: Optional[int] = None
+) -> dict:
     return {
         "id": game.id,
         "fingerprint": game.fingerprint,
@@ -228,7 +315,7 @@ def game_summary(game: Game, mistake_count: Optional[int] = None) -> dict:
         "analyzed": game.analyzed_at is not None,
         "analyzed_at": game.analyzed_at.isoformat() if game.analyzed_at else None,
         "analyzed_depth": game.analyzed_depth,
-        "move_count": len(game.moves) if game.moves else 0,
+        "move_count": move_count if move_count is not None else len(game.moves or []),
         "mistake_count": mistake_count if mistake_count is not None else len(game.mistakes or []),
     }
 

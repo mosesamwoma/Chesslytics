@@ -136,7 +136,7 @@ export default function Training() {
       setBusy(true)
       setError(null)
       try {
-        const result = await submitAttempt(puzzle.id, { uci, player: puzzle.player })
+        const result = await submitAttempt(puzzle.id, { uci })
         setFeedback(result)
         setSelected(null)
         setPromotion(null)

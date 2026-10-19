@@ -1,56 +1,217 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app import auth
-from app.api import analysis, auth as auth_api, coach, games, patterns, training
+from app import auth, security, settings
+from app.api import admin, analysis, auth as auth_api, coach, games, patterns, training
 from app.chess.engine import SearchLimit
 from app.database.database import init_db, session_scope
 from app.mining.mistake_detector import MinerConfig
 from app.mining.profiler import CATEGORY_LABELS, motif_label
-from app.services import analysis_service, export_service
+from app.services import analysis_service, export_service, job_service, user_service
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logger = logging.getLogger("chesslytics")
 
 DEFAULT_PGN = os.path.join("data", "games.pgn")
-DEFAULT_CORS = "http://127.0.0.1:5173"
+JSON_BODY_LIMIT = 1024 * 1024
+UPLOAD_OVERHEAD = 1024 * 1024
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; "
+    "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+)
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
+
+
+class BodyTooLarge(Exception):
+    pass
+
+
+class BodyLimitMiddleware:
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        limit = JSON_BODY_LIMIT
+        if path.endswith("/upload"):
+            limit = settings.max_upload_bytes() + UPLOAD_OVERHEAD
+
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared is not None and declared.isdigit() and int(declared) > limit:
+            await self._reject(send)
+            return
+
+        received = 0
+        started = False
+        rejected = False
+
+        async def limited_receive():
+            nonlocal received, rejected
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    if not started and not rejected:
+                        rejected = True
+                        await self._reject(send)
+                    raise BodyTooLarge()
+            return message
+
+        async def tracking_send(message) -> None:
+            nonlocal started
+            if rejected:
+                return
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except BodyTooLarge:
+            if not started and not rejected:
+                await self._reject(send)
+
+    @staticmethod
+    async def _reject(send) -> None:
+        body = b'{"detail":"request body too large"}'
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                    (b"connection", b"close"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    with session_scope() as session:
+        user_service.bootstrap_admin(session)
+        user_service.prune_audit(session)
+    job_service.recover_interrupted()
     yield
+    job_service.shutdown()
 
 
 def cors_origins() -> list[str]:
-    raw = os.environ.get("CORS_ORIGINS", DEFAULT_CORS)
-    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    raw = os.environ.get("CORS_ORIGINS", "")
+    origins = [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
+    if "*" in origins:
+        logger.warning("CORS_ORIGINS contains '*', which is not allowed with credentials; ignored")
+        origins = [origin for origin in origins if origin != "*"]
+    return origins
 
 
-app = FastAPI(title="Chesslytics", version="1.0.0", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition", "X-Mistake-Count"],
+def allowed_hosts() -> list[str]:
+    raw = os.environ.get("ALLOWED_HOSTS", "")
+    return [host.strip() for host in raw.split(",") if host.strip()]
+
+
+docs_on = settings.docs_enabled()
+app = FastAPI(
+    title="Chesslytics",
+    version="2.0.0",
+    lifespan=lifespan,
+    docs_url="/docs" if docs_on else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if docs_on else None,
 )
-protected = [Depends(auth.require_auth)]
+
+
+@app.middleware("http")
+async def protect(request: Request, call_next):
+    path = request.url.path
+    is_api = path.startswith("/api/")
+    if (
+        is_api
+        and request.method not in auth.SAFE_METHODS
+        and not request.headers.get(auth.CSRF_HEADER)
+    ):
+        response = JSONResponse({"detail": "missing request protection header"}, status_code=403)
+    else:
+        response = await call_next(request)
+
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    if not (docs_on and path in DOC_PATHS):
+        response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+    if security.is_https(request):
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    if is_api:
+        response.headers["Cache-Control"] = "no-store"
+    elif path.startswith("/assets/"):
+        response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+    else:
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "internal server error"}, status_code=500)
+
+
+if cors_origins():
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins(),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "X-CSRF-Protection"],
+        expose_headers=["Content-Disposition", "X-Mistake-Count"],
+    )
+if allowed_hosts():
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
+app.add_middleware(BodyLimitMiddleware)
+
 app.include_router(auth_api.router)
-app.include_router(games.router, dependencies=protected)
-app.include_router(analysis.router, dependencies=protected)
-app.include_router(patterns.router, dependencies=protected)
-app.include_router(training.router, dependencies=protected)
-app.include_router(coach.router, dependencies=protected)
+app.include_router(admin.router)
+app.include_router(games.router)
+app.include_router(analysis.router)
+app.include_router(patterns.router)
+app.include_router(training.router)
+app.include_router(coach.router)
 
 
 @app.get("/api/health")
@@ -203,7 +364,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--save",
         action="store_true",
-        help="store the games and results in the database as well",
+        help="store the games and results in the database as well (requires --user)",
+    )
+    parser.add_argument(
+        "--user",
+        default=None,
+        help="username that owns the saved games; the account must already exist",
     )
     parser.add_argument("--quiet", action="store_true", help="suppress progress output")
     return parser.parse_args(argv)
@@ -432,14 +598,25 @@ def main(argv=None) -> int:
         exclude_book=args.exclude_book,
     )
 
+    owner_id = None
     if args.save:
+        if not args.user:
+            print("error: --save needs --user USERNAME", file=sys.stderr)
+            return 2
         init_db()
+        with session_scope() as lookup:
+            owner = user_service.get_by_username(lookup, args.user)
+            if owner is None:
+                print(f"error: no account named {args.user!r}", file=sys.stderr)
+                return 2
+            owner_id = owner.id
 
     started = time.monotonic()
     try:
         with (session_scope() if args.save else nullcontext(None)) as session:
             report = analysis_service.analyze_source(
                 session=session,
+                user_id=owner_id,
                 path=args.pgn,
                 config=config,
                 limit=limit,

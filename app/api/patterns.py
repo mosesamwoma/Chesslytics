@@ -6,17 +6,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import auth
 from app.database.database import get_db
-from app.database.models import Game, Mistake, PlayerProfile
+from app.database.models import Game, Mistake, PlayerProfile, User
 from app.services import analysis_service
 
 router = APIRouter(prefix="/api/patterns", tags=["patterns"])
 
 
-def _grouped(db: Session, column) -> list[dict]:
+def _grouped(db: Session, user_id: int, column) -> list[dict]:
     rows = db.execute(
         select(column, func.count(Mistake.id))
-        .where(column.is_not(None))
+        .where(Mistake.user_id == user_id, column.is_not(None))
         .group_by(column)
         .order_by(func.count(Mistake.id).desc())
     ).all()
@@ -24,16 +25,24 @@ def _grouped(db: Session, column) -> list[dict]:
 
 
 @router.get("/overview")
-def overview(db: Session = Depends(get_db)) -> dict:
-    total_games = int(db.scalar(select(func.count(Game.id))) or 0)
+def overview(user: User = Depends(auth.current_user), db: Session = Depends(get_db)) -> dict:
+    uid = user.id
+    total_games = int(db.scalar(select(func.count(Game.id)).where(Game.user_id == uid)) or 0)
     analyzed = int(
-        db.scalar(select(func.count(Game.id)).where(Game.analyzed_at.is_not(None))) or 0
+        db.scalar(
+            select(func.count(Game.id)).where(
+                Game.user_id == uid, Game.analyzed_at.is_not(None)
+            )
+        )
+        or 0
     )
-    mistakes = int(db.scalar(select(func.count(Mistake.id))) or 0)
-    average = db.scalar(select(func.avg(Mistake.loss)))
+    mistakes = int(db.scalar(select(func.count(Mistake.id)).where(Mistake.user_id == uid)) or 0)
+    average = db.scalar(select(func.avg(Mistake.loss)).where(Mistake.user_id == uid))
     pressured = int(
         db.scalar(
-            select(func.count(Mistake.id)).where(Mistake.in_time_pressure.is_(True))
+            select(func.count(Mistake.id)).where(
+                Mistake.user_id == uid, Mistake.in_time_pressure.is_(True)
+            )
         )
         or 0
     )
@@ -44,20 +53,21 @@ def overview(db: Session = Depends(get_db)) -> dict:
         "mistakes": mistakes,
         "average_loss": round(float(average), 2) if average is not None else 0.0,
         "time_pressure_mistakes": pressured,
-        "by_category": _grouped(db, Mistake.category),
-        "by_severity": _grouped(db, Mistake.severity),
-        "by_phase": _grouped(db, Mistake.phase),
-        "by_color": _grouped(db, Mistake.color),
-        "top_openings": _grouped(db, Mistake.opening)[:10],
+        "by_category": _grouped(db, uid, Mistake.category),
+        "by_severity": _grouped(db, uid, Mistake.severity),
+        "by_phase": _grouped(db, uid, Mistake.phase),
+        "by_color": _grouped(db, uid, Mistake.color),
+        "top_openings": _grouped(db, uid, Mistake.opening)[:10],
     }
 
 
 @router.get("/profiles")
 def list_profiles(
     limit: int = Query(20, ge=1, le=100),
+    user: User = Depends(auth.current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    rows = analysis_service.list_profiles(db, limit=limit)
+    rows = analysis_service.list_profiles(db, user.id, limit=limit)
     return {
         "profiles": [
             {
@@ -80,10 +90,11 @@ def list_profiles(
 
 @router.get("/profile")
 def latest_profile(
-    player: Optional[str] = Query(default=None),
+    player: Optional[str] = Query(default=None, max_length=128),
+    user: User = Depends(auth.current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    profile = analysis_service.latest_profile(db, player=player)
+    profile = analysis_service.latest_profile(db, user.id, player=player)
     if profile is None:
         raise HTTPException(status_code=404, detail="no profile has been generated yet")
     return analysis_service.profile_payload(profile)
@@ -92,18 +103,19 @@ def latest_profile(
 @router.get("")
 def list_patterns(
     profile_id: Optional[int] = Query(default=None),
-    kind: Optional[str] = Query(default=None),
+    kind: Optional[str] = Query(default=None, max_length=32),
     recurring_only: bool = Query(default=False),
+    user: User = Depends(auth.current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     if profile_id is None:
-        profile = analysis_service.latest_profile(db)
+        profile = analysis_service.latest_profile(db, user.id)
         if profile is None:
             return {"profile_id": None, "patterns": []}
         profile_id = profile.id
 
     profile = db.get(PlayerProfile, profile_id)
-    if profile is None:
+    if profile is None or profile.user_id != user.id:
         raise HTTPException(status_code=404, detail="profile not found")
 
     patterns = [analysis_service.pattern_to_dict(row) for row in profile.patterns]

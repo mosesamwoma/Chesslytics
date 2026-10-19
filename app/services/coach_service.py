@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+from datetime import timedelta
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.database.models import CoachInsight, Mistake, PlayerProfile
+from app.database.models import CoachInsight, Mistake, PlayerProfile, utcnow
 from app.mining.profiler import label_for
 
 if TYPE_CHECKING:
     from groq import Groq
 
+logger = logging.getLogger("chesslytics")
+
 DEFAULT_MODEL = "openai/gpt-oss-120b"
+REQUEST_TIMEOUT_SECONDS = 45.0
+MAX_COMPLETION_TOKENS = 4000
 MAX_MISTAKES = 6
 MAX_PATTERNS = 8
 
@@ -49,7 +55,9 @@ def groq_client() -> "Groq":
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not set")
-    return _groq_module().Groq(api_key=api_key)
+    return _groq_module().Groq(
+        api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=1
+    )
 
 
 def groq_model() -> str:
@@ -73,7 +81,12 @@ def _mistake_row(mistake: Mistake) -> dict:
 
 
 def top_mistakes(session: Session, profile: PlayerProfile) -> list[dict]:
-    statement = select(Mistake).order_by(Mistake.loss.desc()).limit(MAX_MISTAKES)
+    statement = (
+        select(Mistake)
+        .where(Mistake.user_id == profile.user_id)
+        .order_by(Mistake.loss.desc())
+        .limit(MAX_MISTAKES)
+    )
     if profile.player:
         statement = statement.where(Mistake.player == profile.player)
     rows = list(session.scalars(statement))
@@ -157,17 +170,18 @@ def request_completion(context: dict) -> tuple[dict, str]:
             model=model,
             messages=build_messages(context),
             temperature=0.4,
-            max_tokens=1500,
+            max_completion_tokens=MAX_COMPLETION_TOKENS,
             response_format={"type": "json_object"},
         )
     except groq.GroqError as exc:
-        raise RuntimeError(f"Groq request failed: {exc}") from exc
+        logger.warning("Groq request failed: %s", exc)
+        raise RuntimeError("the coaching service could not complete the request") from exc
 
     raw = response.choices[0].message.content or ""
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("Groq response was not valid JSON") from exc
+        raise RuntimeError("the coaching service returned an unreadable response") from exc
 
     try:
         return _validate_payload(parsed), raw
@@ -190,9 +204,10 @@ def generate(session: Session, profile: PlayerProfile) -> CoachInsight:
     validated, raw = request_completion(context)
 
     insight = CoachInsight(
+        user_id=profile.user_id,
         profile_id=profile.id,
         player=profile.player,
-        model=groq_model(),
+        model=groq_model()[:128],
         summary=validated["summary"],
         focus_drill=validated["focus_drill"],
         sections=validated["sections"],
@@ -201,6 +216,18 @@ def generate(session: Session, profile: PlayerProfile) -> CoachInsight:
     session.add(insight)
     session.flush()
     return insight
+
+
+def generated_today(session: Session, user_id: int) -> int:
+    since = utcnow() - timedelta(days=1)
+    return int(
+        session.scalar(
+            select(func.count(CoachInsight.id)).where(
+                CoachInsight.user_id == user_id, CoachInsight.created_at >= since
+            )
+        )
+        or 0
+    )
 
 
 def get_or_create(session: Session, profile: PlayerProfile, force: bool = False) -> CoachInsight:

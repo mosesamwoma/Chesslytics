@@ -2,365 +2,270 @@
 
 **Stop reviewing games one at a time. Start finding the mistake you keep making.**
 
-Chesslytics ingests your PGN games, evaluates every move with Stockfish, and mines
-the results for **recurring** weaknesses — not "you blundered on move 23," but "you hang
-pieces in the middlegame under time pressure, four games running." Stockfish tells you what
-happened in one game. This tool tells you what keeps happening across all of them.
-
-**Live app:** [chesslytics.onrender.com](https://chesslytics.onrender.com/)
-
----
-
-## Why this exists
-
-Engine review tools are great at telling you *that* a move lost 2.3 pawns. They're bad at
-telling you *why you keep doing it*. This project treats every evaluated move as a data
-point, stores it, and mines the collection for patterns: which categories of mistake recur,
-in which phase of the game, under what clock pressure, against which openings. The engine
-stays the source of objective truth; the mining layer is what turns raw evaluations into
-something you can actually study.
+Chesslytics ingests PGN games, evaluates every move with Stockfish, and mines the results for
+**recurring** weaknesses: not "you blundered on move 23" but "you hang pieces in the middlegame
+under time pressure, four games running." It is a multi-user web application: every person has
+their own account and their own private library, and administrators manage accounts without ever
+seeing anyone's games.
 
 ## Features
 
-- **Deep move evaluation** — every move scored by Stockfish, evaluations normalized to the
-  mover's perspective, with mate scores handled correctly rather than approximated.
-- **Static exchange evaluation (SEE)** — hanging-piece detection based on the actual outcome
-  of a full capture sequence, not "attacked by something cheaper."
-- **Tactical motif recognition** — mates, forks, pins, and skewers are detected on the
-  resulting position, independent of whether the move's notation makes them obvious.
-- **Mistake mining** — configurable severity bands (inaccuracy/mistake/blunder), phase
-  detection, time-pressure flags, and a fixed-priority category system so nothing is
-  double-counted.
-- **Pattern & profile mining** — recurring categories, weak openings, tactical
-  weaknesses, and evidence-only observations (no invented psychology).
-- **AI coaching commentary** — a Groq-backed Coach turns your mined patterns and worst
-  mistakes into a plain-English summary, a focus drill for the week, and a short set of
-  topic breakdowns, grounded strictly in the evidence already mined (no invented reasons).
-- **Multi-engine verification** — re-check every flagged mistake with a second engine
-  binary and mark it `agreed` / `disputed`, so you know which findings to trust.
-- **Parallel analysis** — an opt-in process pool for analyzing large collections faster,
-  with measured (not assumed) speed-up numbers documented below.
-- **Opening-book awareness** — Polyglot `.bin` support to mark or exclude mistakes that
-  were technically still "in theory."
-- **Training mode** — every stored mistake becomes a puzzle: play a move against the
-  position, get graded on winning-chance loss, and track accuracy per category over time.
-- **Four interfaces, one engine** — CLI, REST API, Postgres-backed persistence, and a
-  React/Vite dashboard, all built on the same analysis core.
-- **Optional login** — set `AUTH_PASSWORD` and every API route requires a signed session token; leave it
-  empty and the app stays open for local use.
-- **Exports** — JSON, CSV, or JSONL, from both the CLI and the API, for anyone who wants
-  to do their own analysis downstream.
+- **Move evaluation** with Stockfish, normalised to the mover's perspective, with correct mate handling.
+- **Static exchange evaluation** for hanging-piece detection and **tactical motif** detection (mates, forks, pins, skewers).
+- **Mistake mining**: severity bands, game phase, time-pressure flags, opening-book awareness and a fixed-priority category system.
+- **Patterns, Chess DNA and Coach**: recurring categories, weak openings, evidence-only observations and optional AI coaching through Groq.
+- **Training mode**: every stored mistake becomes a puzzle, graded on winning-chance loss. Progress survives re-analysis.
+- **Background analysis**: uploads return immediately; analysis runs in a bounded worker pool with live progress and cancel.
+- **Accounts and administration**: registration, sign-in, password change, account deletion, and an admin console.
+- **Exports** in JSON, CSV and JSONL, plus a CLI for batch work.
 
-## Quick Start
+## Security model
+
+| Area | What is enforced |
+| --- | --- |
+| Passwords | scrypt (N=32768, r=8, p=1), per-user random salt, constant-time comparison, transparent upgrade of old hashes. Minimum 10 characters, common passwords and passwords containing the username are rejected. |
+| Sessions | Signed token in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` automatically over HTTPS). No token is ever visible to JavaScript. Changing a password, disabling an account or changing a role ends that account's other sessions immediately. |
+| Brute force | Per-account lockout (8 failures, 15 minutes) stored in the database, plus a per-IP failure throttle. Unknown usernames take the same time as wrong passwords. |
+| CSRF | Every state-changing API call must carry the `X-CSRF-Protection` header, which browsers cannot add cross-site without CORS approval. |
+| Data isolation | Every table holding user data carries a `user_id`; every query is scoped to the signed-in user. Other people's IDs return `404`. Administrators cannot read other users' games through any route. |
+| Abuse limits | Upload size, games per upload, games per user, plies per game, analysis depth and seconds, one active analysis per user, global queue size, per-user rate limits on uploads, puzzle attempts and Coach requests. |
+| Engine safety | Clients cannot choose engine, book or verifier paths. These were previously accepted by the API and allowed running arbitrary programs on the server. |
+| Transport and browser | Strict `Content-Security-Policy`, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS over HTTPS, `no-store` on API responses, request body size limit, optional `ALLOWED_HOSTS`. |
+| Output | CSV exports neutralise spreadsheet formula injection. Server errors never leak internals. API docs are disabled unless `ENABLE_DOCS=true`. |
+| Audit | Registrations, sign-ins, lockouts, password changes and every administrator action are recorded and shown in the admin console. |
+
+Fail-closed by design: the application never runs without authentication. If no administrator is
+configured it still starts, logs a warning, and users can register, but nobody can administer.
+
+## Quick start (local)
+
+Requirements: Python 3.12, Node 22, Stockfish (`apt install stockfish`, `brew install stockfish`
+or the official download). On Debian and Ubuntu the binary is `/usr/games/stockfish`; leave
+`STOCKFISH_PATH` empty and it is found automatically.
 
 ```bash
-git clone https://github.com/mosesamwoma/Chesslytics.git
-cd Chesslytics
-
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# install Stockfish for your platform, see below
-which stockfish   # confirm the path, then set it in .env
-
-# install Postgres (or run `docker compose up postgres` to use the bundled one)
-
 cp .env.example .env
-# set POSTGRES_* to match your Postgres instance, and GROQ_API_KEY if you want
-# the Coach feature — everything else works without it
-
-python -m app.main --pgn data/sample_games.pgn --limit-time 0.05
 ```
 
-## Installation
+Edit `.env`: set `SECRET_KEY` (32 or more random characters), `ADMIN_USERNAME` and
+`ADMIN_PASSWORD` (10 or more characters, must not contain the username). Without a database
+setting the app uses a local SQLite file. Generate a secret with:
 
-Requires **Python 3.11+**, a **Stockfish** binary, a **Postgres** database, and **Node.js 22+** for the
-web app (Vite 8 needs a recent Node).
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
 
-| Platform | Command |
+Build the frontend once, then start the server:
+
+```bash
+cd frontend && npm ci && npm run build && cd ..
+uvicorn app.main:app --port 8000
+```
+
+Open http://127.0.0.1:8000 and sign in as the administrator. For frontend development run
+`npm run dev` in `frontend/`; the dev server proxies `/api` to port 8000.
+
+## Deploy on a VPS (Docker, PostgreSQL, automatic HTTPS)
+
+1. Point a DNS `A` record for your domain at the server and open ports 80 and 443.
+2. Create `.env` next to `docker-compose.yml`:
+
+```dotenv
+POSTGRES_USER=chesslytics
+POSTGRES_PASSWORD=<long random string>
+POSTGRES_DB=chesslytics_db
+SECRET_KEY=<48 random characters>
+ADMIN_USERNAME=<your admin name>
+ADMIN_PASSWORD=<10+ characters>
+SITE_ADDRESS=chesslytics.example.com
+ALLOWED_HOSTS=chesslytics.example.com
+```
+
+3. Run `docker compose up -d --build`.
+
+Caddy obtains and renews the TLS certificate automatically. PostgreSQL sits on an internal
+network with no published port, and the application container is only reachable through Caddy.
+The compose file refuses to start until you set a real database password, secret and admin
+credentials. Use a long random `POSTGRES_PASSWORD`; short numeric passwords are guessable.
+
+The compose file sets `TRUSTED_PROXY_HOPS=1` so the real client address (as seen by Caddy) is used for
+rate limiting. Run a single application process (the default) because the rate limiter and
+job queue live in process memory.
+
+Back up the `postgres-data` volume, for example with
+`docker compose exec postgres pg_dump -U chesslytics chesslytics_db > backup.sql`.
+
+## Deploy on Render with Neon
+
+1. In Neon, copy the connection string (it ends with `?sslmode=require`).
+2. In Render, create a Blueprint from this repository (`render.yaml`).
+3. Set the environment variables below. Use the Neon string for `DATABASE_URL`.
+
+| Variable | Value |
 | --- | --- |
-| Debian / Ubuntu | `sudo apt install stockfish` (installs to `/usr/games/stockfish`) |
-| Fedora | `sudo dnf install stockfish` |
-| macOS | `brew install stockfish` |
-| Windows | Download from [stockfishchess.org](https://stockfishchess.org/download/) |
+| `DATABASE_URL` | Neon connection string |
+| `ADMIN_USERNAME` | your admin name |
+| `ADMIN_PASSWORD` | 10 or more characters, not containing the username |
+| `SECRET_KEY` | generated automatically by the blueprint |
+| `TRUSTED_PROXY_HOPS` | `1` (set by the blueprint; see the note below) |
 
-The app resolves the binary in this order: `--stockfish` CLI flag → `STOCKFISH_PATH` in
-`.env` → `PATH`. If `STOCKFISH_PATH` is set but wrong, it fails with a clear error rather
-than silently falling back — run `which stockfish` and confirm before setting it.
+Check in the admin console's activity log that sign-in events show real client addresses. If
+every event shows the same address, increase `TRUSTED_PROXY_HOPS` by one.
 
-Opening books are optional and need no extra install; standard Polyglot `.bin` files
-(exportable from most chess GUIs) work out of the box via `--book`.
+The free Render plan has very little CPU, and its disk is wiped on every restart, so keep
+`MAX_CONCURRENT_JOBS=1` and use a lower `STOCKFISH_DEPTH` there. Move to a paid plan or a VPS for
+real traffic. When you move to a VPS, point `POSTGRES_*` at the new database and restore a dump
+of the Neon database; no code changes are needed.
 
-### Setting up Postgres (Linux)
+### Upgrading an existing single-user installation
 
-Install the server and client:
+Start the new version with `ADMIN_USERNAME` and `ADMIN_PASSWORD` set (the old `AUTH_USERNAME`
+and `AUTH_PASSWORD` are still read as fallbacks). On first start the application:
 
-```bash
-sudo apt update && sudo apt install -y postgresql   # Debian / Ubuntu
-sudo dnf install -y postgresql-server               # Fedora
-sudo systemctl enable --now postgresql
-```
+1. adds the new tables and `user_id` columns,
+2. replaces the global-unique game fingerprint index with a per-user one,
+3. creates the administrator,
+4. assigns every existing game, mistake, profile and coach report to that administrator.
 
-Create the role and database used by `.env`. Set `POSTGRES_USER` in `.env` to the role you
-want (see [Configuration](#configuration)) — your own login name is the easiest choice,
-because Postgres then authenticates you over the local socket without a password too:
+Nothing is deleted, and starting again changes nothing. If `ADMIN_PASSWORD` is too weak the
+application logs the reason, creates no administrator and leaves your data untouched until you
+fix it. Old sessions are invalidated, so everyone signs in again once.
 
-```bash
-whoami                       # put this in POSTGRES_USER in .env, e.g. mosesamwoma
-set -a; . ./.env; set +a     # load POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+## Administration
 
-sudo -u postgres psql -c "CREATE USER \"$POSTGRES_USER\" WITH PASSWORD '$POSTGRES_PASSWORD';"
-sudo -u postgres psql -c "CREATE DATABASE \"$POSTGRES_DB\" OWNER \"$POSTGRES_USER\";"
-```
+Sign in as an administrator and open **Admin**. You can search users, disable or enable them,
+promote or demote them, reset a password, unlock a locked account, delete an account together
+with all its data, and review the activity log. You cannot disable, demote or delete yourself, and
+the last administrator cannot be removed.
 
-Confirm it's reachable before starting the app. Re-loading `.env` first means these read
-your real values, so there is nothing to substitute by hand:
-
-```bash
-set -a; . ./.env; set +a
-
-psql -d "$POSTGRES_DB" -c "\dt"                                       # socket, no password
-PGPASSWORD="$POSTGRES_PASSWORD" \
-  psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"    # explicit TCP
-```
-
-An empty table list is fine — the app creates its tables on first run. If you see
-`role "..." does not exist`, `POSTGRES_USER` still holds the `.env.example` placeholder —
-set it to a real role (`psql -d postgres -c "\du"` lists them). If you see
-`FATAL: password authentication failed`, `POSTGRES_PASSWORD` doesn't match that role; reset
-it without `sudo` over the socket:
+Without a web session (for example, if you forgot the administrator password), use the command line
+on the server:
 
 ```bash
-psql -d postgres -c "ALTER ROLE \"$POSTGRES_USER\" WITH PASSWORD '$POSTGRES_PASSWORD';"
+python -m app.manage list-users
+python -m app.manage create-user alice
+python -m app.manage create-user ops --admin
+python -m app.manage reset-password alice
+python -m app.manage set-role alice --admin
 ```
 
-If the connection is *refused* rather than rejected, check that `systemctl status postgresql`
-shows it running and that `POSTGRES_PORT` (`5432` by default) isn't already in use.
+On platforms without a shell, set `ADMIN_PASSWORD` to a new value together with
+`ADMIN_RESET_PASSWORD=true`, deploy once, then remove `ADMIN_RESET_PASSWORD`.
 
-Prefer not to install Postgres at all? `docker compose up postgres` creates the same
-role/database automatically from the `POSTGRES_*` values in `.env` — skip straight to
-[Docker](#docker) below.
+To close sign-ups set `ALLOW_REGISTRATION=false`; create accounts yourself with `app.manage`.
+Sign-up is also limited to 5 accounts per hour per address. There is no e-mail verification or
+self-service password reset, because no mail server is configured; administrators reset
+passwords.
 
-Point `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_HOST` /
-`POSTGRES_PORT` in `.env` at whichever of the above you used. Leaving `POSTGRES_HOST` as
-`auto` resolves to the `postgres` docker-compose service when it's reachable, and falls
-back to `127.0.0.1` otherwise — useful when running the API outside Docker against a
-locally exposed Postgres port. If `DATABASE_URL` is set, the app tries it first and falls back
-to the individual `POSTGRES_*` variables when it can't connect, so you can fill in both. URLs
-starting with `postgres://` or `postgresql://` (as hosts like Render give them) are accepted
-as they are.
+## Using the application
 
-### Getting a Groq API key (optional, enables Coach)
+- **Games**: upload a `.pgn` file. It is stored, then analysed in the background. You can leave the page and come back; progress resumes.
+- **Dashboard, Patterns, Chess DNA**: aggregate views of your mistakes.
+- **Training**: replay the position before each mistake and get graded by the engine.
+- **Coach**: optional AI summary of your profile (needs `GROQ_API_KEY`; limited per user per day).
+- **Account**: change your password, download your data, delete your account.
 
-1. Sign up or log in at [console.groq.com](https://console.groq.com).
-2. Open [console.groq.com/keys](https://console.groq.com/keys) → **Create API Key** →
-   copy it.
-3. Paste it into `GROQ_API_KEY` in `.env`.
+Re-analysing a single game updates that game's moves and mistakes but leaves your Chess DNA
+profile alone. Uploading or choosing **Analyze stored games** builds a new profile from the games
+that were analysed in that run.
 
-`GROQ_MODEL` defaults to `openai/gpt-oss-120b`. Groq retires models periodically, so if
-`/api/coach` returns a 502 mentioning `model_not_found`, switch to another from the live
-list at [console.groq.com/docs/models](https://console.groq.com/docs/models) — for example
-`openai/gpt-oss-20b` (faster, cheaper, lower quality). Leaving
-`GROQ_API_KEY` blank disables `/api/coach` only — every other feature works without it.
-
-## Usage
-
-### CLI
+## Command line
 
 ```bash
 python -m app.main --pgn games.pgn --player Alice --limit-time 0.1
+python -m app.main --pgn games.pgn --save --user alice
 ```
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--pgn` | `data/games.pgn` | PGN file to analyze |
-| `--depth` / `--limit-time` | `12` / — | Search depth, or seconds per move (overrides depth) |
-| `--min-loss` | `1.0` | Minimum pawn loss to report — don't go much below 1.0 at depth 12 (engine noise) |
-| `--player` / `--color` | — / `both` | Restrict to one player or color |
-| `--time-pressure` | `30` | Seconds below which a move is flagged as time-pressured |
-| `--workers` | `1` | Parallel engine processes; see [Known Limitations](#known-limitations) |
-| `--verify-with` | — | Second engine binary; flags mistakes the two engines disagree on |
-| `--book` / `--exclude-book` | — | Polyglot `.bin`; mark, or drop, moves still in theory |
-| `--output` / `--output-format` | — | Write results to `.json` / `.csv` / `.jsonl` |
-| `--save` | — | Persist games and results to the database |
-| `--no-cache` / `--rebuild-cache` | — | Bypass or rebuild the evaluation cache |
+| `--pgn` | `data/games.pgn` | PGN file to analyse |
+| `--depth` / `--limit-time` | `12` / none | Search depth, or seconds per move |
+| `--min-loss` | `1.0` | Minimum pawn loss to report |
+| `--player` / `--color` | none / `both` | Restrict to one player or colour |
+| `--time-pressure` | `30` | Seconds below which a move counts as time-pressured |
+| `--workers` | `1` | Parallel engine processes |
+| `--verify-with` | none | Second engine binary for an agree / disputed check |
+| `--book` / `--exclude-book` | none | Polyglot `.bin`; mark or drop moves still in theory |
+| `--output` / `--output-format` | none | Write `.json`, `.csv` or `.jsonl` |
+| `--save` with `--user` | none | Store results in the database for an existing account |
+| `--no-cache` / `--rebuild-cache` | none | Bypass or rebuild the local evaluation cache |
 
-`--player` matters more than it looks — without it, your opponents' blunders are mixed in
-with yours.
+The command line is a trusted, local tool, so engine, book and verifier paths are allowed here.
+The web API ignores them.
 
-### Web App
+## REST API
 
-Run the backend and frontend in two terminals:
-
-```bash
-uvicorn app.main:app --reload              # http://127.0.0.1:8000
-cd frontend && npm install && npm run dev  # http://127.0.0.1:5173
-```
-
-Both are pinned to the IPv4 loopback (`127.0.0.1`). Use that address in the browser, not
-`localhost`: on dual-stack machines `localhost` can resolve to `::1` while uvicorn and Vite
-listen on IPv4 only, which shows up as a refused connection or a CORS error. The Vite dev
-server proxies `/api` to `http://127.0.0.1:8000` (override with `VITE_BACKEND_URL`), so the
-frontend never needs cross-origin access in development.
-
-Six pages: **Dashboard** (aggregate stats), **Games** (upload/manage), **Game Analysis**
-(win-probability chart + step-through board), **Training** (puzzle drills), **Chess DNA**
-(your mistake profile), and **Coach** (AI coaching commentary generated from your profile,
-with a Regenerate button).
-
-For a single-server deployment, build the frontend (`npm run build`) and point
-`FRONTEND_DIST` at `frontend/dist` — FastAPI will serve it directly, no separate dev server
-needed.
-
-### Login
-
-Login is off by default so local use stays frictionless. To turn it on, set a password in `.env`:
-
-```bash
-AUTH_USERNAME=admin
-AUTH_PASSWORD=choose-a-long-password
-```
-
-With `AUTH_PASSWORD` set, the web app shows a sign-in page and every `/api/...` route except
-`/api/health` and `/api/auth/*` returns `401` without a valid session token. Tokens are signed with
-`AUTH_SECRET` (derived from the username and password when not set), expire after
-`AUTH_TOKEN_HOURS` (default 12), and stop working immediately if the password changes. Five failed
-sign-ins from the same address lock sign-in for five minutes. There is one account; this protects a
-personal deployment, it is not a multi-user system. Use HTTPS in production (Render provides it).
-
-### Docker
-
-```bash
-docker compose up --build
-```
-
-The backend image also contains the built web app, so `:8000` serves the full app by itself. Backend on
-`:8000`, frontend on `:8080` via nginx, Postgres on its default port with data
-persisted in a named volume. `./data` is mounted so uploads and the evaluation cache
-survive rebuilds. The backend waits for Postgres to report healthy before starting.
-
-### Training Mode
-
-Every stored mistake becomes a puzzle: you're shown the position before the mistake, you
-play a move, and it's graded against the engine on **winning-chance loss**, not raw
-centipawns (dropping 2 pawns at +0.5 loses the game; the same 2 pawns at +9.0 changes
-nothing). A move matching the stored best move is graded instantly with zero engine calls;
-anything else costs one engine call. Every attempt persists, and accuracy is tracked
-per category so "what should I study" has a real answer.
-
-### Coach
-
-`GET /api/coach` builds a JSON snapshot of your latest profile — recurring categories,
-tactical weaknesses, phase and opening breakdowns, time-pressure share, and your worst
-individual mistakes — and sends it to Groq, which returns a short coaching summary, one
-concrete focus drill, and a handful of topic sections. The result is cached per profile so
-repeat visits don't re-call the model; pass `?refresh=true` (or press Regenerate in the UI)
-to force a new pass. Requires `GROQ_API_KEY`; without it the endpoint returns a clear 503
-rather than failing silently, and every other feature keeps working normally.
-
-### REST API
+All routes except `/api/health` and `/api/auth/status|register|login|logout` require a session
+cookie. Every `POST`, `PATCH` and `DELETE` needs the `X-CSRF-Protection: 1` header.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/games/upload` | Upload a PGN (deduplicated by fingerprint) |
-| `GET` / `DELETE` | `/api/games/{id}` | Fetch or remove one game |
-| `POST` | `/api/analysis/run` | Analyze stored games (`workers`, `verify_with`, `book`, thresholds) |
-| `POST` | `/api/analysis/export` | Download mistakes as json/csv/jsonl |
-| `GET` | `/api/patterns/overview` | Aggregate stats across everything stored |
-| `GET` | `/api/patterns/profile` | Latest player profile |
-| `GET` | `/api/coach` | AI coaching commentary for the latest profile (`player`, `refresh`) |
-| `GET` | `/api/training/puzzles` | Puzzles from stored mistakes (solution withheld) |
-| `POST` | `/api/training/puzzles/{id}/attempt` | Grade a move, persist the attempt |
-| `GET` | `/api/training/stats` | Attempts, solves, and accuracy per category |
+| `GET` | `/api/health` | Liveness probe |
+| `GET` | `/api/auth/status` | Registration availability and password rules |
+| `POST` | `/api/auth/register`, `/login`, `/logout` | Account creation and sessions |
+| `GET` / `DELETE` | `/api/auth/me` | Current user / delete own account |
+| `POST` | `/api/auth/password` | Change password |
+| `POST` | `/api/games/upload` | Store games without analysing |
+| `GET` / `DELETE` | `/api/games`, `/api/games/{id}` | Library |
+| `POST` | `/api/analysis/upload` | Store games and start an analysis job |
+| `POST` | `/api/analysis/run` | Analyse stored games (optional `game_ids`, `update_profile`) |
+| `GET` | `/api/analysis/jobs`, `/jobs/{id}` | Job status and progress |
+| `POST` | `/api/analysis/jobs/{id}/cancel` | Cancel a job |
+| `GET` | `/api/analysis/mistakes`, `/games/{id}`, `/export` | Results and exports |
+| `GET` | `/api/patterns/overview`, `/api/patterns/profile`, `/api/patterns/profiles`, `/api/patterns` | Aggregates |
+| `GET` / `POST` | `/api/training/puzzles...`, `/stats`, `/attempts` | Training |
+| `GET` | `/api/coach` | AI coaching report |
+| `GET` / `PATCH` / `POST` / `DELETE` | `/api/admin/stats`, `/users`, `/audit` | Administrators only |
 
-Auth routes: `GET /api/auth/status` (public, tells the app whether login is on), `POST /api/auth/login`
-(returns a bearer token), and `GET /api/auth/me`.
+Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs`.
 
-Full interactive docs at `/docs` while the server is running.
-
-## Deploy on Render
-
-The repository's root `Dockerfile` builds the web app and the API into **one** service, so Render needs
-only a web service and a Postgres database.
-
-**Option A: Blueprint.** Push the repo to GitHub, then in Render choose **New** → **Blueprint** and select
-the repo. Render reads `render.yaml`, creates the database and the web service, and asks for
-`AUTH_USERNAME` and `AUTH_PASSWORD` (and optionally `GROQ_API_KEY`). `DATABASE_URL` is filled in
-automatically from the database.
-
-**Option B: by hand.**
-
-1. **New** → **PostgreSQL**, pick a paid plan, copy the **Internal Database URL**.
-2. **New** → **Web Service**, pick the repo, set **Runtime** to **Docker**, and add these environment
-   variables:
-
-| Variable | Value |
-| --- | --- |
-| `DATABASE_URL` | the Internal Database URL (the `postgres://` form works as is) |
-| `AUTH_USERNAME` | your username |
-| `AUTH_PASSWORD` | a long password |
-| `AUTH_SECRET` | any long random string |
-| `GROQ_API_KEY` | optional, enables Coach |
-
-3. Set the health check path to `/api/health`, deploy, and open the service URL.
-
-The service listens on Render's `PORT` automatically. You can also set the `POSTGRES_*` variables as a
-fallback in case `DATABASE_URL` cannot connect. Without a persistent disk, the evaluation cache and
-uploaded PGN files are cleared on each deploy; games and mistakes live in Postgres and are kept.
-
-
-## Configuration
-
-Copy `.env.example` to `.env`. Everything except the Postgres connection has a safe
-default — nothing else is required to run the sample data.
+## Configuration reference
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `STOCKFISH_PATH` | auto-detected | Stockfish binary path |
-| `STOCKFISH_DEPTH` / `STOCKFISH_TIME` | `12` / — | Default search limit |
-| `POSTGRES_USER` | `you-name` | Postgres role used to connect — replace the placeholder with your own login name (`whoami`) or any existing role |
-| `POSTGRES_PASSWORD` | `1234` | Password for `POSTGRES_USER` |
-| `POSTGRES_DB` | `chesslytics_db` | Database name |
-| `POSTGRES_HOST` | `auto` | `auto` tries the `postgres` docker-compose host, then falls back to `127.0.0.1` |
-| `POSTGRES_PORT` | `5432` | Postgres port |
-| `DATABASE_URL` | — | Full database URL, tried first; the `POSTGRES_*` variables above are the fallback if it can't connect |
-| `AUTH_USERNAME` | `admin` | Login username when login is enabled |
-| `AUTH_PASSWORD` | — | Setting this turns login on; leave blank to keep the app open |
-| `AUTH_SECRET` | derived | Key used to sign session tokens; set a long random value in production |
-| `AUTH_TOKEN_HOURS` | `12` | How long a sign-in lasts |
-| `GROQ_API_KEY` | — | Enables `/api/coach`; leave blank to disable it |
-| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq chat model used for coaching commentary |
-| `UPLOAD_DIR` / `ANALYSIS_DIR` | `data/uploads` / `data/analysis` | Storage locations |
-| `ANALYSIS_CACHE` / `VERIFY_CACHE` | derived from `ANALYSIS_DIR` | Explicit cache paths |
-| `PARALLEL_WORKERS` | `1` | Default for `--workers` |
-| `VERIFY_WITH` | — | Default for `--verify-with` |
-| `BOOK_PATH` | — | Default for `--book` |
-| `PUZZLE_TOLERANCE` | `5.0` | Win% a training answer may give up and still count as correct |
-| `CORS_ORIGINS` | `http://127.0.0.1:5173` | Allowed browser origins (comma-separated for more than one) |
-| `FRONTEND_DIST` | `frontend/dist` | Built SPA served at `/` when present |
+| `DATABASE_URL` | none | Full database URL (Neon or any Postgres). Takes priority. |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_HOST`, `POSTGRES_PORT` | none | Used when `DATABASE_URL` is empty and `POSTGRES_USER` is set. With neither, a local SQLite file is used. |
+| `SECRET_KEY` | random per start | Signing key, 32 or more characters. Without it every restart signs everyone out. |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | none | Administrator created on first start. |
+| `ADMIN_RESET_PASSWORD` | `false` | One-off reset of the administrator password from `ADMIN_PASSWORD`. |
+| `ALLOW_REGISTRATION` | `true` | Allow public sign-up. |
+| `SESSION_HOURS` | `24` | Session lifetime. |
+| `ALLOWED_HOSTS` | any | Comma-separated host names the server answers to. |
+| `CORS_ORIGINS` | none | Only needed if the frontend is served from another origin. |
+| `TRUSTED_PROXY_HOPS` | `0` | Number of reverse proxies in front of the app. `0` when exposed directly. Set to `1` behind Caddy or Render (the compose file and blueprint already do). A wrong value either lets clients spoof their address or makes everyone share one address. |
+| `COOKIE_SECURE` | auto | Force the `Secure` cookie flag. |
+| `ENABLE_DOCS` | `false` | Expose `/docs` and `/openapi.json`. |
+| `STOCKFISH_PATH` | auto-detect | Engine binary. |
+| `STOCKFISH_DEPTH`, `STOCKFISH_TIME` | `12`, none | Default search limit (time overrides depth). |
+| `MAX_UPLOAD_MB` | `8` | Upload size cap. |
+| `MAX_GAMES_PER_UPLOAD` | `300` | Games per file. |
+| `MAX_GAMES_PER_USER` | `1500` | Library size for non-admin users. |
+| `MAX_PLIES_PER_GAME` | `600` | Longer games are skipped. |
+| `MAX_ANALYSIS_DEPTH`, `MAX_ANALYSIS_SECONDS` | `18`, `2` | Caps on what a user may request. |
+| `MAX_CONCURRENT_JOBS` | `2` | Analyses running at once (each uses one engine process). |
+| `MAX_QUEUED_JOBS` | `40` | Waiting analyses before new ones are refused. |
+| `MAX_CONCURRENT_GRADING` | `2` | Simultaneous training gradings. |
+| `COACH_DAILY_LIMIT` | `10` | Coach reports per user per day. |
+| `PROFILES_KEPT_PER_USER`, `JOB_RETENTION_DAYS` | `5`, `14` | History kept. |
+| `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE` | `5`, `5`, `300` | Connection pool tuning. |
+| `GROQ_API_KEY`, `GROQ_MODEL` | none, `openai/gpt-oss-120b` | Enables Coach. |
+| `PUZZLE_TOLERANCE` | `5.0` | Win-percentage a training answer may lose and still count as correct. |
+| `PARALLEL_WORKERS`, `VERIFY_WITH`, `BOOK_PATH`, `ANALYSIS_DIR` | see `.env.example` | Command-line defaults. |
+| `SITE_ADDRESS` | `:80` | Caddy address (compose only), e.g. your domain. |
+| `LOG_LEVEL` | `INFO` | Logging level. |
 
-## Known Limitations
+## Known limitations
 
-- SEE and motif detection are heuristics, not a full tactics solver — a few plies deep, not
-  a search engine in miniature.
-- `--min-loss` below ~1.0 pawn at depth 12 mixes real mistakes with engine search noise;
-  raise `--depth` before lowering the threshold.
-- Time-pressure stats require clock annotations in the PGN (present on Chess.com exports,
-  often absent elsewhere).
-- Sequential analysis carries Stockfish's transposition table across games in the same run,
-  so results can shift slightly if games are added or reordered. `--workers 2+` isolates
-  each game and avoids this.
-- `--verify-with` is a second noisy opinion, not ground truth — treat `disputed` as "check
-  this one yourself," not "this is wrong."
-- Opening-book coverage is only as good as the book you point it at; `in_book` means "a book
-  had a move here," not "this move was good."
-- Coach commentary is only as good as the evidence behind it — a thin profile (few games,
-  few mistakes) produces thin, generic-sounding sections. It's a summary layer over the
-  mined data, not a substitute for it.
+- Rate limits and the job queue are in process memory, so run one application process. Account lockout is stored in the database and is shared.
+- Analysis jobs interrupted by a restart are marked failed (queued ones are resumed).
+- Heuristic tactics detection (SEE, motifs) is not a full tactics solver.
+- Time-pressure statistics need clock annotations in the PGN (Chess.com exports have them).
+- Coach output is only as good as the evidence behind it, and it sends your profile summary (not raw games) to Groq when enabled.
 
 ## Privacy
 
-Your PGNs are personal data. Turn on login (`AUTH_PASSWORD`) before putting the app on the internet. `data/games.pgn` is gitignored by default — keep it that way
-unless you're fine with your games being public. Everything runs locally except the Coach
-feature, which sends the mined pattern/profile summary (not raw PGNs or board positions) to
-Groq's API when `GROQ_API_KEY` is set. Leave it blank to keep Chesslytics fully local.
+Your games are private to your account. Everything runs on your own server except Coach, which
+sends the mined profile summary to Groq only when `GROQ_API_KEY` is set. Deleting your account
+removes your games, analysis, training history and Coach reports.

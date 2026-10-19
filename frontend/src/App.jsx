@@ -1,5 +1,7 @@
 import { Link, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext.jsx'
+import Account from './pages/Account.jsx'
+import Admin from './pages/Admin.jsx'
 import NavBar from './components/NavBar.jsx'
 import ChessDNA from './pages/ChessDNA.jsx'
 import Coach from './pages/Coach.jsx'
@@ -19,7 +21,7 @@ function NotFound() {
 }
 
 export default function App() {
-  const { status, error, retry } = useAuth()
+  const { status, user, error, retry } = useAuth()
 
   if (status === 'loading') {
     return (
@@ -58,6 +60,8 @@ export default function App() {
           <Route path="/training" element={<Training />} />
           <Route path="/dna" element={<ChessDNA />} />
           <Route path="/coach" element={<Coach />} />
+          <Route path="/account" element={<Account />} />
+          {user?.is_admin ? <Route path="/admin" element={<Admin />} /> : null}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

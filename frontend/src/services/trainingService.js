@@ -31,20 +31,18 @@ export function getSolution(id) {
   return get(`/api/training/puzzles/${id}/solution`)
 }
 
-export function submitAttempt(id, { uci, player, depth, timeLimit, stockfishPath } = {}) {
+export function submitAttempt(id, { uci, depth, timeLimit } = {}) {
   return post(`/api/training/puzzles/${id}/attempt`, {
     uci,
-    player,
     depth,
     time_limit: timeLimit,
-    stockfish_path: stockfishPath,
   })
 }
 
-export function getStats(player) {
-  return get(`/api/training/stats${query({ player })}`)
+export function getStats() {
+  return get('/api/training/stats')
 }
 
-export function listAttempts({ player, limit } = {}) {
-  return get(`/api/training/attempts${query({ player, limit })}`)
+export function listAttempts({ limit } = {}) {
+  return get(`/api/training/attempts${query({ limit })}`)
 }

@@ -165,21 +165,24 @@ def _validate_payload(data: dict) -> dict:
 
 
 def request_completion(context: dict) -> tuple[dict, str]:
-    genai, types = _gemini_modules()
+    _, types = _gemini_modules()
     client = gemini_client()
     model = gemini_model()
+    settings_kwargs = {
+        "system_instruction": SYSTEM_PROMPT,
+        "temperature": 0.4,
+        "max_output_tokens": MAX_COMPLETION_TOKENS,
+        "response_mime_type": "application/json",
+    }
+    if model.startswith("gemini-2.5") and "flash" in model:
+        settings_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
     try:
         response = client.models.generate_content(
             model=model,
             contents=json.dumps(context),
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.4,
-                max_output_tokens=MAX_COMPLETION_TOKENS,
-                response_mime_type="application/json",
-            ),
+            config=types.GenerateContentConfig(**settings_kwargs),
         )
-    except genai.errors.APIError as exc:
+    except Exception as exc:
         logger.warning("Gemini request failed: %s", exc)
         raise RuntimeError("the coaching service could not complete the request") from exc
 

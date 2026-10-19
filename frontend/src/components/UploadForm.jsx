@@ -25,7 +25,7 @@ export default function UploadForm({ onUploaded, disabled = false }) {
       const summary = await uploadAndAnalyze(file, {
         player: player || undefined,
         color,
-        depth,
+        depth: depth > 0 ? depth : undefined,
         min_loss: minLoss,
         ignore_decided: ignoreDecided,
       })

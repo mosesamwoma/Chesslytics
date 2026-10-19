@@ -49,7 +49,7 @@ def get_insight(
     except RuntimeError as exc:
         db.rollback()
         message = str(exc)
-        if "GROQ_API_KEY" in message or "not installed" in message:
+        if "GEMINI_API_KEY" in message or "not installed" in message:
             raise HTTPException(
                 status_code=503, detail="AI coaching is not enabled on this server"
             ) from exc

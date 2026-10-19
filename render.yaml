@@ -23,5 +23,5 @@ services:
         value: "12"
       - key: MAX_CONCURRENT_JOBS
         value: "1"
-      - key: GROQ_API_KEY
+      - key: GEMINI_API_KEY
         sync: false

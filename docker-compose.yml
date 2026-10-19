@@ -1,51 +1,74 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-mosesamwoma}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1234}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a strong POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-chesslytics_db}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mosesamwoma} -d ${POSTGRES_DB:-chesslytics_db}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - internal
 
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-mosesamwoma}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1234}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-chesslytics_db}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY (32+ random characters) in .env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set ADMIN_USERNAME in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD (10+ characters) in .env}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUSTED_PROXY_HOPS: "1"
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
-      STOCKFISH_DEPTH: "12"
-      AUTH_USERNAME: ${AUTH_USERNAME:-}
-      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
-      AUTH_SECRET: ${AUTH_SECRET:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://127.0.0.1:5173,http://127.0.0.1:8080}
+      STOCKFISH_DEPTH: ${STOCKFISH_DEPTH:-12}
+      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-2}
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/srv/data
+    expose:
+      - "8000"
+    networks:
+      - internal
+      - web
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
     ports:
-      - "8080:80"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - web
+
+networks:
+  internal:
+    internal: true
+  web:
 
 volumes:
   postgres-data:
+  caddy-data:
+  caddy-config:

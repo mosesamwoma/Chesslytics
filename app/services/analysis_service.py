@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,7 @@ import chess.pgn
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app import settings
 from app.chess.book import open_book
 from app.chess.engine import ChessEngine, SearchLimit, find_stockfish
 from app.chess.evaluator import (
@@ -21,7 +23,14 @@ from app.chess.evaluator import (
     score_to_cp,
 )
 from app.chess.pgn_parser import load_games, parse_pgn
-from app.database.models import Game, Mistake, Pattern, PlayerProfile, PuzzleAttempt
+from app.database.models import (
+    CoachInsight,
+    Game,
+    Mistake,
+    Pattern,
+    PlayerProfile,
+    PuzzleAttempt,
+)
 from app.mining.mistake_detector import MinerConfig
 from app.mining.pattern_miner import MIN_GAMES_FOR_PATTERN, mine_patterns
 from app.mining.profiler import build_profile, label_for
@@ -30,6 +39,12 @@ from app.services import game_service
 SCHEMA_VERSION = 2
 DEFAULT_DEPTH = 12
 DEFAULT_WORKERS = 1
+
+_file_lock = threading.Lock()
+
+
+class JobCancelled(Exception):
+    pass
 
 
 def analysis_dir() -> Path:
@@ -60,6 +75,18 @@ def default_limit() -> SearchLimit:
     if seconds > 0:
         return SearchLimit("time", seconds)
     return SearchLimit("depth", _env_float("STOCKFISH_DEPTH", float(DEFAULT_DEPTH)))
+
+
+def _write_json(target: Path, payload: dict) -> None:
+    temporary = target.with_name(f"{target.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    with _file_lock:
+        try:
+            with temporary.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            temporary.replace(target)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
 
 
 def load_cache(path: Optional[str] = None) -> dict:
@@ -97,15 +124,13 @@ def save_cache(
         },
         "games": games,
     }
-    temporary = target.with_name(target.name + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle)
-    temporary.replace(target)
+    _write_json(target, payload)
     return target
 
 
 def analyze_source(
     session: Optional[Session] = None,
+    user_id: Optional[int] = None,
     text: Optional[str] = None,
     path: Optional[str] = None,
     config: Optional[MinerConfig] = None,
@@ -142,11 +167,12 @@ def analyze_source(
             "profile": {},
         }
 
-    if persist and session is not None:
-        game_service.store_games(session, games, source)
+    if persist and session is not None and user_id is not None:
+        game_service.store_games(session, user_id, games, source)
 
     report = analyze_games_objects(
         session=session,
+        user_id=user_id,
         games=games,
         config=config,
         limit=limit,
@@ -193,10 +219,7 @@ def save_verify_cache(entries: dict) -> Path:
         },
         "positions": entries,
     }
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle)
-    temporary.replace(path)
+    _write_json(path, payload)
     return path
 
 
@@ -316,6 +339,7 @@ def verify_mistakes(
 
 def analyze_games_objects(
     session: Optional[Session] = None,
+    user_id: Optional[int] = None,
     games: Optional[list[chess.pgn.Game]] = None,
     config: Optional[MinerConfig] = None,
     limit: Optional[SearchLimit] = None,
@@ -328,6 +352,8 @@ def analyze_games_objects(
     book: Optional[str] = None,
     workers: int = DEFAULT_WORKERS,
     verify_with: Optional[str] = None,
+    persist_scope=None,
+    update_profile: bool = True,
 ) -> dict:
     games = games or []
     config = config or MinerConfig()
@@ -382,10 +408,23 @@ def analyze_games_objects(
     report["games"] = len(games)
     report["analyzed_games"] = len(results)
 
-    if persist and session is not None and results:
-        report["persistence"] = persist_analysis(
-            session, results, report, config, engine_name, limit
-        )
+    if persist and user_id is not None and results:
+        if session is not None:
+            report["persistence"] = persist_analysis(
+                session, user_id, results, report, config, engine_name, limit, update_profile
+            )
+        elif persist_scope is not None:
+            with persist_scope() as persist_session:
+                report["persistence"] = persist_analysis(
+                    persist_session,
+                    user_id,
+                    results,
+                    report,
+                    config,
+                    engine_name,
+                    limit,
+                    update_profile,
+                )
 
     return report
 
@@ -406,6 +445,7 @@ def games_from_rows(rows: list[Game]) -> list[chess.pgn.Game]:
 
 def reanalyze(
     session: Session,
+    user_id: int,
     game_ids: Optional[list[int]] = None,
     config: Optional[MinerConfig] = None,
     limit: Optional[SearchLimit] = None,
@@ -417,7 +457,7 @@ def reanalyze(
     workers: int = DEFAULT_WORKERS,
     verify_with: Optional[str] = None,
 ) -> dict:
-    statement = select(Game)
+    statement = select(Game).where(Game.user_id == user_id)
     if game_ids:
         statement = statement.where(Game.id.in_(game_ids))
     rows = list(session.scalars(statement.order_by(Game.id)))
@@ -426,6 +466,7 @@ def reanalyze(
         raise ValueError("no stored games with PGN data to analyze")
     return analyze_games_objects(
         session=session,
+        user_id=user_id,
         games=games,
         config=config,
         limit=limit,
@@ -442,14 +483,16 @@ def reanalyze(
 
 def persist_analysis(
     session: Session,
+    user_id: int,
     results: dict,
     report: dict,
     config: MinerConfig,
     engine_name: str,
     limit: SearchLimit,
+    update_profile: bool = True,
 ) -> dict:
     fingerprints = list(results)
-    rows = list(session.scalars(select(Game).where(Game.fingerprint.in_(fingerprints))))
+    rows = game_service.games_by_fingerprint(session, user_id, fingerprints)
     by_fingerprint = {row.fingerprint: row for row in rows}
 
     stored_moves = 0
@@ -463,23 +506,46 @@ def persist_analysis(
     session.flush()
 
     stored_ids = [game.id for game in by_fingerprint.values()]
+    existing: dict[tuple[int, int], Mistake] = {}
     if stored_ids:
-        stale = select(Mistake.id).where(Mistake.game_id.in_(stored_ids))
-        session.execute(delete(PuzzleAttempt).where(PuzzleAttempt.mistake_id.in_(stale)))
-        session.execute(delete(Mistake).where(Mistake.game_id.in_(stored_ids)))
-        session.flush()
+        for row in session.scalars(select(Mistake).where(Mistake.game_id.in_(stored_ids))):
+            existing[(row.game_id, row.ply)] = row
 
+    kept: set[tuple[int, int]] = set()
     stored_mistakes = 0
     for record in report["mistakes"]:
         game = by_fingerprint.get(record.get("game_key"))
         if game is None:
             continue
-        session.add(_mistake_row(game.id, record))
+        key = (game.id, record.get("ply") or 0)
+        if key in kept:
+            continue
+        kept.add(key)
+        row = existing.get(key)
+        if row is None:
+            row = Mistake(game_id=game.id)
+            session.add(row)
+        _apply_mistake(row, user_id, record)
         stored_mistakes += 1
+
+    stale_ids = [row.id for key, row in existing.items() if key not in kept]
+    if stale_ids:
+        session.execute(delete(PuzzleAttempt).where(PuzzleAttempt.mistake_id.in_(stale_ids)))
+        session.execute(delete(Mistake).where(Mistake.id.in_(stale_ids)))
     session.flush()
 
+    if not update_profile:
+        return {
+            "games": len(by_fingerprint),
+            "moves": stored_moves,
+            "mistakes": stored_mistakes,
+            "patterns": 0,
+            "profile_id": None,
+        }
+
     profile = PlayerProfile(
-        player=config.player,
+        user_id=user_id,
+        player=game_service.fit(config.player, 128),
         color=config.color,
         games_analyzed=report["context"].get("games_analyzed", 0),
         moves_scored=report["context"].get("moves_scored", 0),
@@ -487,7 +553,7 @@ def persist_analysis(
         mistake_count=len(report["mistakes"]),
         average_loss=report["profile"].get("average_loss", 0.0),
         depth=int(limit.value) if limit.kind == "depth" else None,
-        engine=engine_name,
+        engine=game_service.fit(engine_name, 128),
         payload=report["profile"],
     )
     session.add(profile)
@@ -495,6 +561,7 @@ def persist_analysis(
 
     stored_patterns = _store_patterns(session, profile.id, report)
     session.flush()
+    prune_profiles(session, user_id)
 
     return {
         "games": len(by_fingerprint),
@@ -505,41 +572,58 @@ def persist_analysis(
     }
 
 
-def _mistake_row(game_id: int, record: dict) -> Mistake:
-    return Mistake(
-        game_id=game_id,
-        ply=record.get("ply") or 0,
-        move_number=record.get("move_number") or 0,
-        color=record.get("color") or "white",
-        player=record.get("player"),
-        opponent=record.get("opponent"),
-        played_move=record.get("played_move"),
-        played_uci=record.get("played_uci"),
-        best_move=record.get("best_move"),
-        best_move_uci=record.get("best_move_uci"),
-        fen=record.get("fen"),
-        fen_after=record.get("fen_after"),
-        eval_before=record.get("eval_before") or 0.0,
-        eval_after=record.get("eval_after") or 0.0,
-        loss=record.get("loss") or 0.0,
-        loss_cp=record.get("loss_cp") or 0,
-        winpct_before=record.get("winpct_before") or 0.0,
-        winpct_after=record.get("winpct_after") or 0.0,
-        severity=record.get("severity") or "normal",
-        category=record.get("category") or "unknown",
-        category_basis=record.get("category_basis"),
-        phase=record.get("phase") or "unknown",
-        opening=record.get("opening"),
-        in_time_pressure=bool(record.get("in_time_pressure")),
-        time_remaining=record.get("time_remaining"),
-        game_decided=bool(record.get("game_decided")),
-        book_move=record.get("book_move"),
-        in_book=record.get("in_book"),
-        verified_by=record.get("verified_by"),
-        verified_loss=record.get("verified_loss"),
-        agreed=record.get("agreed"),
-        facts=record.get("facts"),
+def prune_profiles(session: Session, user_id: int) -> None:
+    keep = settings.profiles_kept_per_user()
+    old = list(
+        session.scalars(
+            select(PlayerProfile.id)
+            .where(PlayerProfile.user_id == user_id)
+            .order_by(PlayerProfile.created_at.desc(), PlayerProfile.id.desc())
+            .offset(keep)
+        )
     )
+    if not old:
+        return
+    session.execute(delete(CoachInsight).where(CoachInsight.profile_id.in_(old)))
+    session.execute(delete(Pattern).where(Pattern.profile_id.in_(old)))
+    session.execute(delete(PlayerProfile).where(PlayerProfile.id.in_(old)))
+    session.flush()
+
+
+def _apply_mistake(row: Mistake, user_id: int, record: dict) -> Mistake:
+    row.user_id = user_id
+    row.ply = record.get("ply") or 0
+    row.move_number = record.get("move_number") or 0
+    row.color = record.get("color") or "white"
+    row.player = game_service.fit(record.get("player"), 128)
+    row.opponent = game_service.fit(record.get("opponent"), 128)
+    row.played_move = game_service.fit(record.get("played_move"), 16)
+    row.played_uci = game_service.fit(record.get("played_uci"), 8)
+    row.best_move = game_service.fit(record.get("best_move"), 16)
+    row.best_move_uci = game_service.fit(record.get("best_move_uci"), 8)
+    row.fen = record.get("fen")
+    row.fen_after = record.get("fen_after")
+    row.eval_before = record.get("eval_before") or 0.0
+    row.eval_after = record.get("eval_after") or 0.0
+    row.loss = record.get("loss") or 0.0
+    row.loss_cp = record.get("loss_cp") or 0
+    row.winpct_before = record.get("winpct_before") or 0.0
+    row.winpct_after = record.get("winpct_after") or 0.0
+    row.severity = record.get("severity") or "normal"
+    row.category = record.get("category") or "unknown"
+    row.category_basis = record.get("category_basis")
+    row.phase = record.get("phase") or "unknown"
+    row.opening = game_service.fit(record.get("opening"), 255)
+    row.in_time_pressure = bool(record.get("in_time_pressure"))
+    row.time_remaining = record.get("time_remaining")
+    row.game_decided = bool(record.get("game_decided"))
+    row.book_move = game_service.fit(record.get("book_move"), 16)
+    row.in_book = record.get("in_book")
+    row.verified_by = game_service.fit(record.get("verified_by"), 128)
+    row.verified_loss = record.get("verified_loss")
+    row.agreed = record.get("agreed")
+    row.facts = record.get("facts")
+    return row
 
 
 def _store_patterns(session: Session, profile_id: int, report: dict) -> int:
@@ -551,7 +635,7 @@ def _store_patterns(session: Session, profile_id: int, report: dict) -> int:
                 Pattern(
                     profile_id=profile_id,
                     kind=kind,
-                    key=key,
+                    key=game_service.fit(key, 255),
                     count=row["count"],
                     games=row["games"],
                     recurring=row["games"] >= MIN_GAMES_FOR_PATTERN,
@@ -562,17 +646,20 @@ def _store_patterns(session: Session, profile_id: int, report: dict) -> int:
     return stored
 
 
-def list_profiles(session: Session, limit: int = 20) -> list[PlayerProfile]:
+def list_profiles(session: Session, user_id: int, limit: int = 20) -> list[PlayerProfile]:
     statement = (
         select(PlayerProfile)
+        .where(PlayerProfile.user_id == user_id)
         .order_by(PlayerProfile.created_at.desc(), PlayerProfile.id.desc())
         .limit(max(1, min(limit, 100)))
     )
     return list(session.scalars(statement))
 
 
-def latest_profile(session: Session, player: Optional[str] = None) -> Optional[PlayerProfile]:
-    statement = select(PlayerProfile)
+def latest_profile(
+    session: Session, user_id: int, player: Optional[str] = None
+) -> Optional[PlayerProfile]:
+    statement = select(PlayerProfile).where(PlayerProfile.user_id == user_id)
     if player:
         statement = statement.where(PlayerProfile.player == player)
     statement = statement.order_by(
@@ -613,6 +700,7 @@ def pattern_to_dict(pattern: Pattern) -> dict:
 
 def list_mistakes(
     session: Session,
+    user_id: int,
     game_id: Optional[int] = None,
     category: Optional[str] = None,
     severity: Optional[str] = None,
@@ -620,7 +708,7 @@ def list_mistakes(
     limit: int = 100,
     offset: int = 0,
 ) -> list[Mistake]:
-    statement = select(Mistake)
+    statement = select(Mistake).where(Mistake.user_id == user_id)
     if game_id is not None:
         statement = statement.where(Mistake.game_id == game_id)
     if category:

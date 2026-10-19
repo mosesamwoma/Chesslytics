@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { uploadAndAnalyze } from '../services/analysisService.js'
 
-export default function UploadForm({ onComplete }) {
+export default function UploadForm({ onUploaded, disabled = false }) {
   const [file, setFile] = useState(null)
   const [player, setPlayer] = useState('')
   const [color, setColor] = useState('both')
   const [depth, setDepth] = useState(12)
   const [minLoss, setMinLoss] = useState(1)
   const [ignoreDecided, setIgnoreDecided] = useState(true)
-  const [useCache, setUseCache] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
@@ -29,10 +28,9 @@ export default function UploadForm({ onComplete }) {
         depth,
         min_loss: minLoss,
         ignore_decided: ignoreDecided,
-        use_cache: useCache,
       })
       setResult(summary)
-      if (onComplete) onComplete(summary)
+      if (onUploaded) onUploaded(summary)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -44,8 +42,8 @@ export default function UploadForm({ onComplete }) {
     <form className="card" onSubmit={submit}>
       <h2>Analyze a PGN export</h2>
       <p className="subtitle">
-        Every move is evaluated with Stockfish and cached, so re-running with different thresholds
-        costs no engine time.
+        Every move is evaluated with Stockfish in the background, so you can keep using the site
+        while a large export is processed.
       </p>
 
       <div className="filters" style={{ marginBottom: 12 }}>
@@ -82,7 +80,7 @@ export default function UploadForm({ onComplete }) {
             id="depth"
             type="number"
             min="4"
-            max="30"
+            max="18"
             value={depth}
             onChange={(event) => setDepth(Number(event.target.value))}
           />
@@ -109,28 +107,15 @@ export default function UploadForm({ onComplete }) {
             <option value="include">count them</option>
           </select>
         </div>
-        <div className="field">
-          <label htmlFor="cache">Cache</label>
-          <select
-            id="cache"
-            value={useCache ? 'use' : 'skip'}
-            onChange={(event) => setUseCache(event.target.value === 'use')}
-          >
-            <option value="use">reuse engine results</option>
-            <option value="skip">do not read or write</option>
-          </select>
-        </div>
       </div>
 
       <div className="row">
-        <button type="submit" className="button primary" disabled={busy}>
-          {busy ? 'Analyzing…' : 'Upload and analyze'}
+        <button type="submit" className="button primary" disabled={busy || disabled}>
+          {busy ? 'Uploading…' : 'Upload and analyze'}
         </button>
         {busy ? <span className="spinner" aria-hidden="true" /> : null}
-        {busy ? (
-          <span className="muted">
-            Stockfish evaluates every move twice; a large export takes minutes.
-          </span>
+        {disabled && !busy ? (
+          <span className="muted">An analysis is already running for your account.</span>
         ) : null}
       </div>
 
@@ -141,13 +126,13 @@ export default function UploadForm({ onComplete }) {
       ) : null}
 
       {result ? (
-        <div className="notice good" style={{ marginTop: 12 }}>
-          Analyzed {result.parsed} games &middot; {result.mistakes?.length || 0} mistakes &middot;{' '}
-          {result.counts?.moves_analyzed || 0} moves evaluated
-          {result.persistence ? ` · stored ${result.persistence.mistakes} records` : ''}
+        <div className={result.job ? 'notice good' : 'notice'} style={{ marginTop: 12 }}>
+          Read {result.parsed} {result.parsed === 1 ? 'game' : 'games'} &middot; {result.stored} new
+          &middot; {result.skipped} already stored
           {result.errors && result.errors.length
-            ? ` · ${result.errors.length} games skipped while parsing`
+            ? ` · ${result.errors.length} skipped while parsing`
             : ''}
+          {result.job_error ? ` · ${result.job_error}` : ''}
         </div>
       ) : null}
     </form>

@@ -1,0 +1,9 @@
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	request_body {
+		max_size 12MB
+	}
+
+	reverse_proxy backend:8000
+}

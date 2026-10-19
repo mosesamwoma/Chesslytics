@@ -1,294 +1,291 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    Response,
-    UploadFile,
-)
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.chess.engine import SearchLimit
+from app import auth, security, settings
+from app.api.common import read_upload
+from app.api.games import UPLOADS_PER_HOUR, import_text
 from app.database.database import get_db
-from app.database.models import Game
-from app.mining.mistake_detector import MinerConfig
-from app.services import analysis_service, export_service, game_service
+from app.database.models import Game, Mistake, User
+from app.services import analysis_service, export_service, game_service, job_service
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
+EXPORT_ROW_LIMIT = 50000
+Color = Literal["white", "black", "both"]
+
 
 class AnalysisRequest(BaseModel):
-    game_ids: Optional[list[int]] = None
-    player: Optional[str] = None
-    color: str = "both"
+    game_ids: Optional[list[int]] = Field(default=None, max_length=5000)
+    player: Optional[str] = Field(default=None, max_length=128)
+    color: Color = "both"
     depth: Optional[int] = Field(default=None, ge=1, le=40)
-    time_limit: Optional[float] = Field(default=None, gt=0)
-    min_loss: float = Field(default=1.0, ge=0)
-    time_pressure: float = Field(default=30.0, ge=0)
-    inaccuracy: float = Field(default=0.5, ge=0)
-    mistake: float = Field(default=1.0, ge=0)
-    blunder: float = Field(default=2.0, ge=0)
+    time_limit: Optional[float] = Field(default=None, gt=0, le=60)
+    min_loss: float = Field(default=1.0, ge=0, le=100)
+    time_pressure: float = Field(default=30.0, ge=0, le=3600)
+    inaccuracy: float = Field(default=0.5, ge=0, le=100)
+    mistake: float = Field(default=1.0, ge=0, le=100)
+    blunder: float = Field(default=2.0, ge=0, le=100)
     ignore_decided: bool = True
-    use_cache: bool = True
-    rebuild_cache: bool = False
-    stockfish_path: Optional[str] = None
-    workers: int = Field(default=1, ge=1, le=64)
-    verify_with: Optional[str] = None
-    book: Optional[str] = None
-    exclude_book: bool = False
+    update_profile: bool = True
 
 
-class ExportRequest(AnalysisRequest):
-    format: str = "csv"
+def build_limit(depth: Optional[int], time_limit: Optional[float]) -> dict:
+    if time_limit is not None:
+        if time_limit > settings.max_analysis_seconds():
+            raise HTTPException(
+                status_code=400,
+                detail=f"time_limit may not exceed {settings.max_analysis_seconds():g} seconds",
+            )
+        return {"kind": "time", "value": time_limit}
+    if depth:
+        if depth > settings.max_analysis_depth():
+            raise HTTPException(
+                status_code=400,
+                detail=f"depth may not exceed {settings.max_analysis_depth()}",
+            )
+        return {"kind": "depth", "value": float(depth)}
+    default = analysis_service.default_limit()
+    return {"kind": default.kind, "value": default.value}
 
 
-def _config_from(request: AnalysisRequest) -> MinerConfig:
-    return _config(
-        request.player,
-        request.color,
-        request.min_loss,
-        request.time_pressure,
-        request.inaccuracy,
-        request.mistake,
-        request.blunder,
-        request.ignore_decided,
-        request.book,
-        request.exclude_book,
-    )
-
-
-def _config(
+def build_params(
+    game_ids: list[int],
     player: Optional[str],
     color: str,
+    depth: Optional[int],
+    time_limit: Optional[float],
     min_loss: float,
     time_pressure: float,
     inaccuracy: float,
     mistake: float,
     blunder: float,
     ignore_decided: bool,
-    book: Optional[str] = None,
-    exclude_book: bool = False,
-) -> MinerConfig:
-    return MinerConfig(
-        min_loss=min_loss,
-        time_pressure=time_pressure,
-        player=player or None,
-        color=color,
-        inaccuracy=inaccuracy,
-        mistake=mistake,
-        blunder=blunder,
-        ignore_decided=ignore_decided,
-        book=book,
-        exclude_book=exclude_book,
-    )
-
-
-def _limit(depth: Optional[int], time_limit: Optional[float]) -> SearchLimit:
-    if time_limit is not None:
-        return SearchLimit("time", time_limit)
-    if depth:
-        return SearchLimit("depth", float(depth))
-    return analysis_service.default_limit()
-
-
-def _report_summary(report: dict) -> dict:
+    update_profile: bool = True,
+) -> dict:
     return {
-        "engine": report.get("engine"),
-        "limit": report.get("limit"),
-        "counts": report.get("counts"),
-        "persistence": report.get("persistence"),
-        "errors": report.get("errors", []),
-        "context": report.get("context", {}),
-        "config": report.get("config", {}),
-        "book": report.get("book", {}),
-        "verify": report.get("verify", {}),
-        "profile": report.get("profile", {}),
-        "patterns": report.get("patterns", {}),
-        "recurring": report.get("recurring", {}),
-        "largest": report.get("largest"),
-        "mistakes": report.get("mistakes", []),
+        "game_ids": game_ids,
+        "update_profile": update_profile,
+        "limit": build_limit(depth, time_limit),
+        "config": {
+            "player": (player or "").strip() or None,
+            "color": color,
+            "min_loss": min_loss,
+            "time_pressure": time_pressure,
+            "inaccuracy": inaccuracy,
+            "mistake": mistake,
+            "blunder": blunder,
+            "ignore_decided": ignore_decided,
+        },
     }
 
 
-@router.post("/run")
-def run_analysis(request: AnalysisRequest, db: Session = Depends(get_db)) -> dict:
-    config = _config_from(request)
+def start_job(db: Session, user: User, params: dict) -> dict:
     try:
-        report = analysis_service.reanalyze(
-            session=db,
-            game_ids=request.game_ids,
-            config=config,
-            limit=_limit(request.depth, request.time_limit),
-            engine_path=request.stockfish_path,
-            use_cache=request.use_cache,
-            rebuild_cache=request.rebuild_cache,
-            book=request.book,
-            workers=request.workers,
-            verify_with=request.verify_with,
-        )
-    except ValueError as exc:
+        job = job_service.create_job(db, user.id, params, len(params["game_ids"]))
+    except job_service.JobRejected as exc:
         db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        db.rollback()
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     db.commit()
-    return _report_summary(report)
+    job_service.submit(job.id)
+    return job_service.job_payload(job)
 
 
-EXPORT_FILENAMES = {
-    "json": "chess-mistakes.json",
-    "csv": "chess-mistakes.csv",
-    "jsonl": "chess-mistakes.jsonl",
-}
+@router.post("/run", status_code=202)
+def run_analysis(
+    request: AnalysisRequest,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    statement = select(Game.id).where(Game.user_id == user.id)
+    if request.game_ids:
+        statement = statement.where(Game.id.in_(request.game_ids))
+    ids = list(db.scalars(statement.order_by(Game.id)))
+    if not ids:
+        raise HTTPException(status_code=400, detail="no stored games to analyze")
+    params = build_params(
+        ids,
+        request.player,
+        request.color,
+        request.depth,
+        request.time_limit,
+        request.min_loss,
+        request.time_pressure,
+        request.inaccuracy,
+        request.mistake,
+        request.blunder,
+        request.ignore_decided,
+        request.update_profile,
+    )
+    return {"job": start_job(db, user, params)}
 
 
-@router.post("/export")
-def export_mistakes(request: ExportRequest, db: Session = Depends(get_db)) -> Response:
-    fmt = request.format.strip().lower()
+@router.post("/upload", status_code=202)
+async def upload_and_analyze(
+    file: UploadFile = File(...),
+    player: Optional[str] = Form(default=None, max_length=128),
+    color: Color = Form(default="both"),
+    depth: Optional[int] = Form(default=None, ge=1, le=40),
+    time_limit: Optional[float] = Form(default=None, gt=0, le=60),
+    min_loss: float = Form(default=1.0, ge=0, le=100),
+    time_pressure: float = Form(default=30.0, ge=0, le=3600),
+    ignore_decided: bool = Form(default=True),
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    wait = security.limiter.consume(f"upload:{user.id}", UPLOADS_PER_HOUR, 3600)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"too many uploads; try again in {wait} seconds",
+            headers={"Retry-After": str(wait)},
+        )
+    limit = build_limit(depth, time_limit)
+    text = await read_upload(file)
+    result = import_text(db, user, file.filename or "upload.pgn", text)
+    if not result["fingerprints"]:
+        db.rollback()
+        detail = "no usable games found in that file"
+        if result["errors"]:
+            detail = f"{detail}: {result['errors'][0]}"
+        raise HTTPException(status_code=400, detail=detail)
+    db.commit()
+
+    rows = game_service.games_by_fingerprint(db, user.id, result["fingerprints"])
+    params = build_params(
+        sorted(row.id for row in rows),
+        player,
+        color,
+        depth,
+        time_limit,
+        min_loss,
+        time_pressure,
+        0.5,
+        1.0,
+        2.0,
+        ignore_decided,
+    )
+    params["limit"] = limit
+
+    job = None
+    job_error = None
+    try:
+        created = job_service.create_job(db, user.id, params, len(params["game_ids"]))
+        db.commit()
+        job_service.submit(created.id)
+        job = job_service.job_payload(created)
+    except job_service.JobRejected as exc:
+        db.rollback()
+        job_error = str(exc)
+
+    return {
+        "uploaded": result["source"],
+        "parsed": result["parsed"],
+        "stored": result["stored"],
+        "skipped": result["skipped"],
+        "errors": result["errors"],
+        "job": job,
+        "job_error": job_error,
+    }
+
+
+@router.get("/jobs")
+def list_jobs(
+    limit: int = Query(10, ge=1, le=50),
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return {
+        "jobs": [job_service.job_payload(job) for job in job_service.list_jobs(db, user.id, limit)]
+    }
+
+
+@router.get("/jobs/{job_id}")
+def get_job(
+    job_id: int,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    job = job_service.get_job(db, user.id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"job": job_service.job_payload(job)}
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(
+    job_id: int,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    job = job_service.get_job(db, user.id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    job_service.request_cancel(db, job)
+    db.commit()
+    return {"job": job_service.job_payload(job)}
+
+
+@router.get("/export")
+def export_mistakes(
+    format: str = Query("csv", max_length=8),
+    category: Optional[str] = Query(default=None, max_length=32),
+    severity: Optional[str] = Query(default=None, max_length=16),
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    fmt = format.strip().lower()
     if fmt not in export_service.FORMATS:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"unknown export format {fmt!r}; expected one of "
-                f"{', '.join(export_service.FORMATS)}"
-            ),
+            detail=f"unknown export format; expected one of {', '.join(export_service.FORMATS)}",
         )
-    try:
-        report = analysis_service.reanalyze(
-            session=db,
-            game_ids=request.game_ids,
-            config=_config_from(request),
-            limit=_limit(request.depth, request.time_limit),
-            engine_path=request.stockfish_path,
-            use_cache=request.use_cache,
-            rebuild_cache=request.rebuild_cache,
-            book=request.book,
-            workers=request.workers,
-            verify_with=request.verify_with,
-        )
-    except ValueError as exc:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        db.rollback()
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    statement = (
+        select(Mistake, Game.fingerprint)
+        .join(Game, Game.id == Mistake.game_id)
+        .where(Mistake.user_id == user.id)
+    )
+    if category:
+        statement = statement.where(Mistake.category == category)
+    if severity:
+        statement = statement.where(Mistake.severity == severity)
+    statement = statement.order_by(Mistake.loss_cp.desc(), Mistake.id).limit(EXPORT_ROW_LIMIT)
 
-    db.commit()
+    records = []
+    for mistake, fingerprint in db.execute(statement).all():
+        record = game_service.mistake_to_dict(mistake)
+        record["game_key"] = fingerprint
+        records.append(record)
+
     return Response(
-        content=export_service.render(report, fmt),
+        content=export_service.render({"mistakes": records}, fmt),
         media_type=export_service.content_type(fmt),
         headers={
-            "Content-Disposition": f'attachment; filename="{EXPORT_FILENAMES[fmt]}"',
-            "X-Mistake-Count": str(len(report.get("mistakes") or [])),
+            "Content-Disposition": f'attachment; filename="chesslytics-mistakes.{export_service.extension(fmt)}"',
+            "X-Mistake-Count": str(len(records)),
         },
     )
-
-
-@router.post("/upload")
-async def upload_and_analyze(
-    file: UploadFile = File(...),
-    player: Optional[str] = Form(default=None),
-    color: str = Form(default="both"),
-    depth: Optional[int] = Form(default=None),
-    time_limit: Optional[float] = Form(default=None),
-    min_loss: float = Form(default=1.0),
-    time_pressure: float = Form(default=30.0),
-    ignore_decided: bool = Form(default=True),
-    use_cache: bool = Form(default=True),
-    rebuild_cache: bool = Form(default=False),
-    stockfish_path: Optional[str] = Form(default=None),
-    workers: int = Form(default=1),
-    verify_with: Optional[str] = Form(default=None),
-    book: Optional[str] = Form(default=None),
-    exclude_book: bool = Form(default=False),
-    db: Session = Depends(get_db),
-) -> dict:
-    content = await file.read()
-    try:
-        path = game_service.save_upload(file.filename or "upload.pgn", content)
-        report = analysis_service.analyze_source(
-            session=db,
-            text=content.decode("utf-8", errors="replace"),
-            source=path.name,
-            config=_config(
-                player,
-                color,
-                min_loss,
-                time_pressure,
-                0.5,
-                1.0,
-                2.0,
-                ignore_decided,
-                book,
-                exclude_book,
-            ),
-            limit=_limit(depth, time_limit),
-            engine_path=stockfish_path,
-            use_cache=use_cache,
-            rebuild_cache=rebuild_cache,
-            persist=True,
-            workers=max(1, workers),
-            verify_with=verify_with,
-            book=book,
-        )
-    except ValueError as exc:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        db.rollback()
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    db.commit()
-    summary = _report_summary(report)
-    summary["uploaded"] = path.name
-    summary["parsed"] = report.get("analyzed_games", 0)
-    return summary
-
-
-@router.get("/cache")
-def cache_info() -> dict:
-    cache = analysis_service.load_cache()
-    games = cache.get("games") or {}
-    moves = sum(len(entry.get("moves") or []) for entry in games.values())
-    return {
-        "path": str(analysis_service.cache_file()),
-        "meta": cache.get("meta") or {},
-        "games": len(games),
-        "moves": moves,
-    }
-
-
-@router.delete("/cache")
-def clear_cache() -> dict:
-    path = analysis_service.cache_file()
-    if path.exists():
-        path.unlink()
-        return {"cleared": str(path)}
-    return {"cleared": None}
 
 
 @router.get("/mistakes")
 def list_mistakes(
     game_id: Optional[int] = Query(default=None),
-    category: Optional[str] = Query(default=None),
-    severity: Optional[str] = Query(default=None),
-    player: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None, max_length=32),
+    severity: Optional[str] = Query(default=None, max_length=16),
+    player: Optional[str] = Query(default=None, max_length=128),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    user: User = Depends(auth.current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     rows = analysis_service.list_mistakes(
         db,
+        user.id,
         game_id=game_id,
         category=category,
         severity=severity,
@@ -304,12 +301,12 @@ def list_mistakes(
 
 
 @router.get("/games/{game_id}")
-def analyzed_game(game_id: int, db: Session = Depends(get_db)) -> dict:
-    return game_service.game_detail(_game_or_404(db, game_id))
-
-
-def _game_or_404(db: Session, game_id: int) -> Game:
-    game = db.scalar(select(Game).where(Game.id == game_id))
+def analyzed_game(
+    game_id: int,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    game = game_service.get_game(db, user.id, game_id)
     if game is None:
         raise HTTPException(status_code=404, detail="game not found")
-    return game
+    return game_service.game_detail(game)

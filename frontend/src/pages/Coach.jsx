@@ -39,7 +39,7 @@ export default function Coach() {
             <Link to="/games">Games</Link> page first.
           </>
         ) : noKey ? (
-          <>Set GROQ_API_KEY on the backend to enable AI coaching commentary.</>
+          <>Set GEMINI_API_KEY on the backend to enable AI coaching commentary.</>
         ) : (
           <>
             {error.message}{' '}

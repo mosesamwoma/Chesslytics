@@ -21,7 +21,6 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_LENGTH = 32
 SCRYPT_SALT_BYTES = 16
-SCRYPT_MAXMEM = 128 * SCRYPT_N * SCRYPT_R * 2 + 1024 * 1024
 
 MIN_PASSWORD_LENGTH = 10
 MAX_PASSWORD_LENGTH = 128
@@ -154,7 +153,7 @@ def password_error(password: str, username: Optional[str] = None) -> Optional[st
     if len(password) > MAX_PASSWORD_LENGTH:
         return f"password must be at most {MAX_PASSWORD_LENGTH} characters"
     lowered = password.lower()
-    if lowered in COMMON_PASSWORDS:
+    if lowered in COMMON_PASSWORDS or "change_me" in lowered or "changeme" in lowered:
         return "that password is too common"
     if len(set(password)) < 4:
         return "password needs more variety"

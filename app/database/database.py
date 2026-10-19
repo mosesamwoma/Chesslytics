@@ -74,13 +74,20 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-def database_url() -> str:
+def database_urls() -> list[str]:
+    urls: list[str] = []
     explicit = os.environ.get("DATABASE_URL", "").strip()
     if explicit:
-        return _normalize_url(explicit)
+        urls.append(_normalize_url(explicit))
     if os.environ.get("POSTGRES_USER", "").strip():
-        return _postgres_url_from_env()
-    return DEFAULT_SQLITE_URL
+        urls.append(_postgres_url_from_env())
+    if not urls:
+        urls.append(DEFAULT_SQLITE_URL)
+    return list(dict.fromkeys(urls))
+
+
+def database_url() -> str:
+    return database_urls()[0]
 
 
 def describe_url(url: str) -> str:
@@ -244,27 +251,28 @@ def migrate_schema() -> list[str]:
 
 def _connect_first_available() -> Engine:
     global _engine, _session_factory
-    url = database_url()
+    urls = database_urls()
     last_error: Optional[OperationalError] = None
     for attempt in range(1, INIT_DB_RETRIES + 1):
-        candidate = _build_engine(url)
-        try:
-            with candidate.connect():
-                pass
-        except OperationalError as exc:
-            last_error = exc
-            candidate.dispose()
-            if attempt < INIT_DB_RETRIES:
-                logger.warning(
-                    "database not reachable (attempt %s/%s), retrying", attempt, INIT_DB_RETRIES
-                )
-                time.sleep(INIT_DB_RETRY_DELAY)
-            continue
-        if _engine is not None:
-            _engine.dispose()
-        _engine = candidate
-        _session_factory = None
-        return candidate
+        for url in urls:
+            candidate = _build_engine(url)
+            try:
+                with candidate.connect():
+                    pass
+            except OperationalError as exc:
+                last_error = exc
+                candidate.dispose()
+                continue
+            if _engine is not None:
+                _engine.dispose()
+            _engine = candidate
+            _session_factory = None
+            return candidate
+        if attempt < INIT_DB_RETRIES:
+            logger.warning(
+                "database not reachable (attempt %s/%s), retrying", attempt, INIT_DB_RETRIES
+            )
+            time.sleep(INIT_DB_RETRY_DELAY)
     if last_error is not None:
         raise last_error
     raise RuntimeError("no database url configured")

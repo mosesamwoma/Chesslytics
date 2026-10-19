@@ -26,14 +26,14 @@ def get_insight(
     if profile is None:
         raise HTTPException(status_code=404, detail="no profile has been generated yet")
 
-    existing = None if refresh else coach_service.latest_insight(db, profile.id)
-    if existing is not None and existing.model != coach_service.gemini_model():
-        existing = None
-    if existing is not None:
-        return coach_service.insight_payload(existing)
+    latest = None if refresh else coach_service.latest_insight(db, profile.id)
+    if latest is not None and latest.model == coach_service.gemini_model():
+        return coach_service.insight_payload(latest)
 
     wait = security.limiter.consume(f"coach:{user.id}", COACH_PER_MINUTE, 60)
     if wait:
+        if latest is not None:
+            return coach_service.insight_payload(latest)
         raise HTTPException(
             status_code=429,
             detail=f"slow down; try again in {wait} seconds",
@@ -41,6 +41,8 @@ def get_insight(
         )
     daily = settings.coach_daily_limit()
     if user.role != "admin" and coach_service.generated_today(db, user.id) >= daily:
+        if latest is not None:
+            return coach_service.insight_payload(latest)
         raise HTTPException(
             status_code=429,
             detail=f"you have used your {daily} coaching reports for today; try again tomorrow",

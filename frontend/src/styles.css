@@ -387,6 +387,7 @@ a.button {
 input[type='text'],
 input[type='number'],
 input[type='password'],
+input[type='search'],
 select {
   font: inherit;
   font-size: 14px;

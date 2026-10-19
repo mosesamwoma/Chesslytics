@@ -27,6 +27,8 @@ def get_insight(
         raise HTTPException(status_code=404, detail="no profile has been generated yet")
 
     existing = None if refresh else coach_service.latest_insight(db, profile.id)
+    if existing is not None and existing.model != coach_service.gemini_model():
+        existing = None
     if existing is not None:
         return coach_service.insight_payload(existing)
 

@@ -1,9 +1,10 @@
-FROM node:22-alpine AS frontend
+FROM node:26-alpine AS frontend
 
 WORKDIR /build
 
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm install --global npm@12.2.0 \
+    && npm ci --no-audit --no-fund
 
 COPY frontend/ ./
 RUN npm run build

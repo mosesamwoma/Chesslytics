@@ -44,13 +44,14 @@ configured it still starts, logs a warning, and users can register, but nobody c
 
 ## Quick start (local)
 
-Requirements: Python 3.12, Node 22, Stockfish (`apt install stockfish`, `brew install stockfish`
+Requirements: Python 3.12, Node 26 with npm 12 or newer, Stockfish (`apt install stockfish`, `brew install stockfish`
 or the official download). On Debian and Ubuntu the binary is `/usr/games/stockfish`; leave
 `STOCKFISH_PATH` empty and it is found automatically.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install --upgrade -r requirements.txt
 cp .env.example .env
 ```
 
@@ -71,6 +72,30 @@ uvicorn app.main:app --port 8000
 
 Open http://127.0.0.1:8000 and sign in as the administrator. For frontend development run
 `npm run dev` in `frontend/`; the dev server proxies `/api` to port 8000.
+
+### Updating dependencies
+
+Python uses `pip`'s explicit `--upgrade` option:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install --upgrade -r requirements.txt
+```
+
+For npm, `npm ci` is intentionally used for normal builds because it installs the exact
+versions recorded in `frontend/package-lock.json`. npm does not use pip's `--upgrade` flag:
+use `npm update` to refresh dependencies within the ranges declared in `frontend/package.json`,
+then commit the updated lockfile. To update npm itself:
+
+```bash
+npm install --global npm@latest
+cd frontend
+npm update
+npm run build
+```
+
+The Docker build uses Node 26 and npm 12, installs npm before installing the frontend
+dependencies, and uses the lockfile for the production build.
 
 ## Deploy on a VPS (Docker, PostgreSQL, automatic HTTPS)
 

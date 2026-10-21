@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import ConfirmDialog from '../components/ConfirmDialog.jsx'
+import ErrorNotice from '../components/ErrorNotice.jsx'
 import GameCard from '../components/GameCard.jsx'
 import UploadForm from '../components/UploadForm.jsx'
 import JobProgress from '../components/JobProgress.jsx'
 import useJobRunner from '../hooks/useJobRunner.js'
+import { useRetryAfter } from '../hooks/useRetryAfter.js'
 import { deleteGame, listGames } from '../services/gamesService.js'
 import { isFinished, listJobs, runAnalysis } from '../services/analysisService.js'
 
@@ -14,7 +17,10 @@ export default function Games() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
   const runner = useJobRunner()
+  const gate = useRetryAfter(error)
   const { follow } = runner
 
   const load = useCallback(async () => {
@@ -84,13 +90,18 @@ export default function Games() {
     if (summary.job) track(summary.job)
   }
 
-  const remove = async (game) => {
-    if (!window.confirm(`Delete ${game.white} vs ${game.black}?`)) return
+  const confirmRemove = async () => {
+    if (!pendingDelete) return
+    setDeleting(true)
     try {
-      await deleteGame(game.id)
+      await deleteGame(pendingDelete.id)
+      setPendingDelete(null)
       await load()
     } catch (err) {
+      setPendingDelete(null)
       setError(err)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -111,7 +122,7 @@ export default function Games() {
           type="button"
           className="button"
           onClick={analyzeAll}
-          disabled={busy || runner.running || !total}
+          disabled={busy || runner.running || !total || gate.blocked}
         >
           {busy ? 'Starting…' : 'Analyze stored games'}
         </button>
@@ -138,23 +149,14 @@ export default function Games() {
         </div>
       ) : null}
 
-      {runner.error ? (
-        <div className="notice error" style={{ marginTop: 12 }}>
-          {runner.error.message}
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="notice error" style={{ marginTop: 16 }}>
-          {error.message}
-        </div>
-      ) : null}
+      <ErrorNotice error={runner.error} style={{ marginTop: 12 }} />
+      <ErrorNotice error={error} style={{ marginTop: 16 }} />
 
       <div className={loading && data ? 'loading-dim' : undefined} style={{ marginTop: 16 }}>
         {data && data.games.length ? (
           <div className="list">
             {data.games.map((game) => (
-              <GameCard key={game.id} game={game} onDelete={remove} />
+              <GameCard key={game.id} game={game} onDelete={setPendingDelete} />
             ))}
           </div>
         ) : (
@@ -184,6 +186,24 @@ export default function Games() {
             Next
           </button>
         </div>
+      ) : null}
+
+      {pendingDelete ? (
+        <ConfirmDialog
+          title="Delete this game?"
+          confirmLabel="Delete game"
+          danger
+          busy={deleting}
+          onConfirm={confirmRemove}
+          onCancel={() => setPendingDelete(null)}
+        >
+          <p>
+            <strong>
+              {pendingDelete.white} vs {pendingDelete.black}
+            </strong>{' '}
+            and the analysis stored for it will be removed. Your other games are not affected.
+          </p>
+        </ConfirmDialog>
       ) : null}
     </div>
   )

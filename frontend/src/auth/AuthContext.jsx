@@ -24,7 +24,11 @@ async function resolveSession() {
 export function AuthProvider({ children }) {
   const [status, setStatus] = useState('loading')
   const [user, setUser] = useState(null)
-  const [info, setInfo] = useState({ registration_enabled: false, min_password_length: 10 })
+  const [info, setInfo] = useState({
+    registration_enabled: false,
+    min_password_length: 10,
+    email_enabled: false,
+  })
   const [error, setError] = useState(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -76,6 +80,12 @@ export function AuthProvider({ children }) {
     setStatus('anonymous')
   }, [])
 
+  const refreshUser = useCallback(async () => {
+    const me = await fetchMe()
+    setUser(me.user)
+    return me.user
+  }, [])
+
   const endSession = useCallback(() => {
     setUser(null)
     setStatus('anonymous')
@@ -84,8 +94,20 @@ export function AuthProvider({ children }) {
   const retry = useCallback(() => setAttempt((value) => value + 1), [])
 
   const value = useMemo(
-    () => ({ status, user, info, error, login, register, logout, endSession, retry }),
-    [status, user, info, error, login, register, logout, endSession, retry],
+    () => ({
+      status,
+      user,
+      info,
+      error,
+      login,
+      register,
+      logout,
+      endSession,
+      refreshUser,
+      setUser,
+      retry,
+    }),
+    [status, user, info, error, login, register, logout, endSession, refreshUser, retry],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

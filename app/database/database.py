@@ -245,6 +245,12 @@ def migrate_schema() -> list[str]:
             connection.execute(
                 text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id)")
             )
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_verified_email "
+                "ON users (email_key) WHERE email_verified_at IS NOT NULL"
+            )
+        )
 
     return applied
 

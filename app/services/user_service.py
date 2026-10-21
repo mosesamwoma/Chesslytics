@@ -8,8 +8,9 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import security, settings
+from app import mailer, security, settings
 from app.database.models import (
+    AccountToken,
     AnalysisJob,
     AuditLog,
     CoachInsight,
@@ -194,8 +195,8 @@ def revoke_sessions(session: Session, user: User) -> None:
     session.flush()
 
 
-def user_payload(user: User) -> dict:
-    return {
+def user_payload(user: User, private: bool = False) -> dict:
+    payload = {
         "id": user.id,
         "username": user.username,
         "role": user.role,
@@ -203,7 +204,77 @@ def user_payload(user: User) -> dict:
         "is_active": bool(user.is_active),
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+        "email_verified": user.email_verified_at is not None,
     }
+    if private:
+        payload["email"] = user.email
+    return payload
+
+
+def set_email(session: Session, user: User, email: str) -> None:
+    problem = mailer.email_error(email)
+    if problem:
+        raise UserError(problem)
+    key = mailer.normalize_email(email)
+    if user.email_key == key and user.email_verified_at is not None:
+        raise UserError("that address is already confirmed on your account")
+    user.email = email.strip()
+    user.email_key = key
+    user.email_verified_at = None
+    session.flush()
+
+
+def clear_email(session: Session, user: User) -> None:
+    user.email = None
+    user.email_key = None
+    user.email_verified_at = None
+    session.execute(
+        delete(AccountToken).where(
+            AccountToken.user_id == user.id,
+            AccountToken.kind == "verify_email",
+        )
+    )
+    session.flush()
+
+
+def confirm_email(session: Session, user: User, key: str) -> None:
+    if user.email_key != key:
+        raise UserError("this link is no longer valid")
+    other = session.scalar(
+        select(User.id).where(
+            User.email_key == key,
+            User.email_verified_at.is_not(None),
+            User.id != user.id,
+        )
+    )
+    if other is not None:
+        raise UserError("that address is already confirmed on another account")
+    user.email_verified_at = utcnow()
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise UserError("that address is already confirmed on another account") from exc
+
+
+def find_for_reset(session: Session, identifier: str) -> Optional[User]:
+    text_value = identifier.strip()
+    if not text_value:
+        return None
+    if "@" in text_value:
+        user = session.scalar(
+            select(User).where(
+                User.email_key == mailer.normalize_email(text_value),
+                User.email_verified_at.is_not(None),
+            )
+        )
+    else:
+        user = get_by_username(session, text_value)
+        if user is not None and user.email_verified_at is None:
+            return None
+    if user is None or not user.is_active or not user.email:
+        return None
+    return user
 
 
 def delete_user_data(session: Session, user_id: int) -> None:
@@ -219,6 +290,7 @@ def delete_user_data(session: Session, user_id: int) -> None:
         )
     )
     session.execute(delete(CoachInsight).where(CoachInsight.user_id == user_id))
+    session.execute(delete(AccountToken).where(AccountToken.user_id == user_id))
     session.execute(delete(Pattern).where(Pattern.profile_id.in_(profile_ids)))
     session.execute(delete(PlayerProfile).where(PlayerProfile.user_id == user_id))
     session.execute(
@@ -331,8 +403,10 @@ def list_users(
 ) -> tuple[list[dict], int]:
     filters = []
     if query:
-        pattern = f"%{query.strip().lower()}%"
-        filters.append(User.username_key.like(pattern))
+        escaped = (
+            query.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        filters.append(User.username_key.like(f"%{escaped}%", escape="\\"))
 
     total = int(session.scalar(select(func.count(User.id)).where(*filters)) or 0)
     users = list(

@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import ErrorNotice from '../components/ErrorNotice.jsx'
+import Modal from '../components/Modal.jsx'
 import StatTile from '../components/StatTile.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
+  createResetLink,
   deleteUser,
   getAudit,
   getStats,
@@ -19,8 +22,161 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
 }
 
+function formatLifetime(seconds) {
+  if (seconds >= 3600) return `${Math.round(seconds / 3600)} hour(s)`
+  return `${Math.max(1, Math.round(seconds / 60))} minute(s)`
+}
+
+function PasswordDialog({ row, minLength, busy, error, onSubmit, onCancel }) {
+  const [password, setPassword] = useState('')
+  const [repeat, setRepeat] = useState('')
+  const [mismatch, setMismatch] = useState(false)
+
+  const submit = (event) => {
+    event.preventDefault()
+    if (password !== repeat) {
+      setMismatch(true)
+      return
+    }
+    setMismatch(false)
+    onSubmit(password)
+  }
+
+  return (
+    <Modal title={`Set a new password for ${row.username}`} onClose={onCancel} busy={busy}>
+      <form onSubmit={submit}>
+        <p className="muted">
+          They will be signed out everywhere. Share the new password privately, or use a reset
+          link instead so you never see it.
+        </p>
+        <div className="field">
+          <label htmlFor="admin-new-password">New password</label>
+          <input
+            id="admin-new-password"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={minLength}
+            maxLength={128}
+            data-autofocus
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="admin-repeat-password">Repeat new password</label>
+          <input
+            id="admin-repeat-password"
+            type="password"
+            autoComplete="new-password"
+            required
+            maxLength={128}
+            value={repeat}
+            onChange={(event) => setRepeat(event.target.value)}
+          />
+          <span className="muted">At least {minLength} characters.</span>
+        </div>
+        {mismatch ? <div className="notice error">The two passwords do not match.</div> : null}
+        <ErrorNotice error={error} />
+        <div className="modal-actions">
+          <button type="button" className="button" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className="button primary" disabled={busy}>
+            {busy ? 'Please wait…' : 'Set password'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function LinkDialog({ row, link, onClose }) {
+  const field = useRef(null)
+  const [copied, setCopied] = useState(false)
+  const url = `${window.location.origin}${link.path}`
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+    } catch {
+      if (field.current) field.current.select()
+    }
+  }
+
+  return (
+    <Modal title={`Reset link for ${row.username}`} onClose={onClose}>
+      <p className="muted">
+        Send this link to {row.username} privately. It works once and expires in{' '}
+        {formatLifetime(link.expires_in)}. Anyone who opens it can choose a new password for the
+        account, so treat it like a password.
+      </p>
+      <div className="field">
+        <label htmlFor="reset-link">One-time link</label>
+        <input
+          id="reset-link"
+          ref={field}
+          type="text"
+          readOnly
+          value={url}
+          data-autofocus
+          onFocus={(event) => event.target.select()}
+        />
+      </div>
+      <div className="modal-actions">
+        <button type="button" className="button" onClick={copy}>
+          {copied ? 'Copied' : 'Copy link'}
+        </button>
+        <button type="button" className="button primary" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function DeleteDialog({ row, busy, error, onConfirm, onCancel }) {
+  const [typed, setTyped] = useState('')
+  const matches = typed.trim().toLowerCase() === row.username.toLowerCase()
+
+  return (
+    <Modal title={`Delete ${row.username}?`} onClose={onCancel} busy={busy}>
+      <p>
+        This permanently removes <strong>{row.username}</strong> together with their games,
+        analysis, puzzles and progress. It cannot be undone.
+      </p>
+      <div className="field">
+        <label htmlFor="delete-confirm">Type the username to confirm</label>
+        <input
+          id="delete-confirm"
+          type="text"
+          autoComplete="off"
+          data-autofocus
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
+        />
+      </div>
+      <ErrorNotice error={error} />
+      <div className="modal-actions">
+        <button type="button" className="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="button danger"
+          disabled={busy || !matches}
+          onClick={onConfirm}
+        >
+          {busy ? 'Please wait…' : 'Delete user'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 export default function Admin() {
-  const { user: me } = useAuth()
+  const { user: me, info } = useAuth()
   const [stats, setStats] = useState(null)
   const [users, setUsers] = useState([])
   const [total, setTotal] = useState(0)
@@ -31,6 +187,8 @@ export default function Admin() {
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [dialog, setDialog] = useState(null)
+  const [dialogError, setDialogError] = useState(null)
 
   const load = useCallback(async () => {
     setError(null)
@@ -40,6 +198,11 @@ export default function Admin() {
         listUsers({ q: search, limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
         getAudit(50),
       ])
+      const last = Math.max(0, Math.ceil(userPayload.total / PAGE_SIZE) - 1)
+      if (page > last) {
+        setPage(last)
+        return
+      }
       setStats(statPayload)
       setUsers(userPayload.users)
       setTotal(userPayload.total)
@@ -82,15 +245,38 @@ export default function Admin() {
 
   const unlock = (row) => act(() => unlockUser(row.id), `${row.username} was unlocked.`)
 
-  const resetPassword = (row) => {
-    const value = window.prompt(`New password for ${row.username} (at least 10 characters):`)
-    if (!value) return
-    act(() => resetUserPassword(row.id, value), `Password reset for ${row.username}.`)
+  const closeDialog = () => {
+    setDialog(null)
+    setDialogError(null)
   }
 
-  const remove = (row) => {
-    if (!window.confirm(`Permanently delete ${row.username} and all of their data?`)) return
-    act(() => deleteUser(row.id), `${row.username} was deleted.`)
+  const dialogWork = async (work, success) => {
+    setBusy(true)
+    setDialogError(null)
+    try {
+      await work()
+      setDialog(null)
+      setNotice(success)
+      await load()
+    } catch (err) {
+      setDialogError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const makeLink = async (row) => {
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const link = await createResetLink(row.id)
+      setDialog({ type: 'link', row, link })
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)
@@ -106,7 +292,7 @@ export default function Admin() {
         </div>
       </div>
 
-      {error ? <div className="notice error">{error.message}</div> : null}
+      <ErrorNotice error={error} />
       {notice ? <div className="notice good">{notice}</div> : null}
 
       {stats ? (
@@ -220,23 +406,33 @@ export default function Admin() {
                             Unlock
                           </button>
                         ) : null}
-                        <button
-                          type="button"
-                          className="button"
-                          disabled={busy}
-                          onClick={() => resetPassword(row)}
-                        >
-                          Reset password
-                        </button>
                         {self ? null : (
-                          <button
-                            type="button"
-                            className="button danger"
-                            disabled={busy}
-                            onClick={() => remove(row)}
-                          >
-                            Delete
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="button"
+                              disabled={busy}
+                              onClick={() => makeLink(row)}
+                            >
+                              Reset link
+                            </button>
+                            <button
+                              type="button"
+                              className="button"
+                              disabled={busy}
+                              onClick={() => setDialog({ type: 'password', row })}
+                            >
+                              Set password
+                            </button>
+                            <button
+                              type="button"
+                              className="button danger"
+                              disabled={busy}
+                              onClick={() => setDialog({ type: 'delete', row })}
+                            >
+                              Delete
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>
@@ -316,6 +512,36 @@ export default function Admin() {
           </table>
         </div>
       </div>
+
+      {dialog && dialog.type === 'password' ? (
+        <PasswordDialog
+          row={dialog.row}
+          minLength={info.min_password_length}
+          busy={busy}
+          error={dialogError}
+          onCancel={closeDialog}
+          onSubmit={(value) =>
+            dialogWork(
+              () => resetUserPassword(dialog.row.id, value),
+              `Password reset for ${dialog.row.username}.`,
+            )
+          }
+        />
+      ) : null}
+      {dialog && dialog.type === 'link' ? (
+        <LinkDialog row={dialog.row} link={dialog.link} onClose={closeDialog} />
+      ) : null}
+      {dialog && dialog.type === 'delete' ? (
+        <DeleteDialog
+          row={dialog.row}
+          busy={busy}
+          error={dialogError}
+          onCancel={closeDialog}
+          onConfirm={() =>
+            dialogWork(() => deleteUser(dialog.row.id), `${dialog.row.username} was deleted.`)
+          }
+        />
+      ) : null}
     </div>
   )
 }

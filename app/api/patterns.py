@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app import auth
 from app.database.database import get_db
 from app.database.models import Game, Mistake, PlayerProfile, User
-from app.services import analysis_service
+from app.services import analysis_service, progress_service
 
 router = APIRouter(prefix="/api/patterns", tags=["patterns"])
 
@@ -59,6 +59,24 @@ def overview(user: User = Depends(auth.current_user), db: Session = Depends(get_
         "by_color": _grouped(db, uid, Mistake.color),
         "top_openings": _grouped(db, uid, Mistake.opening)[:10],
     }
+
+
+@router.get("/progress")
+def progress(
+    weeks: int = Query(26, ge=2, le=104),
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return progress_service.progress(db, user.id, weeks)
+
+
+@router.get("/openings")
+def openings(
+    min_games: int = Query(1, ge=1, le=100),
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return progress_service.openings(db, user.id, min_games)
 
 
 @router.get("/profiles")

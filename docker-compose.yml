@@ -37,6 +37,17 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       STOCKFISH_DEPTH: ${STOCKFISH_DEPTH:-12}
       MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-2}
+      MAX_BACKUP_MB: ${MAX_BACKUP_MB:-32}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
     depends_on:
       postgres:
         condition: service_healthy

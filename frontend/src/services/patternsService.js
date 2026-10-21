@@ -9,6 +9,14 @@ export function getLatestProfile(player) {
   return get(`/api/patterns/profile${query}`)
 }
 
+export function getProgress(weeks = 26) {
+  return get(`/api/patterns/progress?weeks=${weeks}`)
+}
+
+export function getOpenings(minGames = 1) {
+  return get(`/api/patterns/openings?min_games=${minGames}`)
+}
+
 export function listProfiles(limit = 20) {
   return get(`/api/patterns/profiles?limit=${limit}`)
 }

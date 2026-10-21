@@ -52,7 +52,8 @@ export default function MistakeCard({ mistake, onSelect, selected }) {
           {Number(mistake.winpct_after).toFixed(0)}%
         </span>
         <span>{phaseLabel(mistake.phase)}</span>
-        {clock ? <span>Clock {clock}</span> : null}
+        {mistake.opening ? <span>Opening: {mistake.opening}</span> : null}
+        {clock ? <span>Clock left {clock}</span> : null}
         {mistake.in_time_pressure ? <span className="badge">time pressure</span> : null}
         {mistake.game_decided ? <span className="badge">decided position</span> : null}
         {mistake.in_book ? (

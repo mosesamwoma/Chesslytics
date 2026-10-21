@@ -1,18 +1,136 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext.jsx'
-import { changePassword, deleteAccount } from '../services/authService.js'
+import ErrorNotice from '../components/ErrorNotice.jsx'
+import Modal from '../components/Modal.jsx'
+import { useRetryAfter } from '../hooks/useRetryAfter.js'
+import {
+  backupUrl,
+  removeEmail,
+  restoreBackup,
+  resendVerification,
+  setEmail,
+} from '../services/accountService.js'
 import { exportUrl } from '../services/analysisService.js'
+import { changePassword, deleteAccount } from '../services/authService.js'
+
+function DeleteDialog({ busy, error, onConfirm, onCancel }) {
+  const [password, setPassword] = useState('')
+
+  const submit = (event) => {
+    event.preventDefault()
+    onConfirm(password)
+  }
+
+  return (
+    <Modal title="Delete your account?" onClose={onCancel} busy={busy}>
+      <form onSubmit={submit}>
+        <p>
+          This permanently removes your account, games, analysis and training progress. Download
+          a backup first if you may want it later.
+        </p>
+        <div className="field">
+          <label htmlFor="delete-password">Confirm with your password</label>
+          <input
+            id="delete-password"
+            type="password"
+            autoComplete="current-password"
+            required
+            data-autofocus
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </div>
+        <ErrorNotice error={error} />
+        <div className="modal-actions">
+          <button type="button" className="button" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className="button danger" disabled={busy}>
+            {busy ? 'Please wait…' : 'Delete my account'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function EmailDialog({ title, description, confirmLabel, busy, error, onSubmit, onCancel, withAddress }) {
+  const [address, setAddress] = useState('')
+  const [password, setPassword] = useState('')
+
+  const submit = (event) => {
+    event.preventDefault()
+    onSubmit(address.trim(), password)
+  }
+
+  return (
+    <Modal title={title} onClose={onCancel} busy={busy}>
+      <form onSubmit={submit}>
+        <p className="muted">{description}</p>
+        {withAddress ? (
+          <div className="field">
+            <label htmlFor="email-address">Email address</label>
+            <input
+              id="email-address"
+              type="email"
+              autoComplete="email"
+              required
+              maxLength={254}
+              data-autofocus
+              value={address}
+              onChange={(event) => setAddress(event.target.value)}
+            />
+          </div>
+        ) : null}
+        <div className="field">
+          <label htmlFor="email-password">Your password</label>
+          <input
+            id="email-password"
+            type="password"
+            autoComplete="current-password"
+            required
+            data-autofocus={withAddress ? undefined : true}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </div>
+        <ErrorNotice error={error} />
+        <div className="modal-actions">
+          <button type="button" className="button" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className="button primary" disabled={busy}>
+            {busy ? 'Please wait…' : confirmLabel}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
 
 export default function Account() {
-  const { user, info, endSession } = useAuth()
+  const { user, info, endSession, setUser } = useAuth()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [repeat, setRepeat] = useState('')
   const [passwordMessage, setPasswordMessage] = useState(null)
   const [passwordError, setPasswordError] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState('')
-  const [deleteError, setDeleteError] = useState(null)
+  const [dialog, setDialog] = useState(null)
+  const [dialogError, setDialogError] = useState(null)
+  const [emailMessage, setEmailMessage] = useState(null)
+  const [emailError, setEmailError] = useState(null)
+  const [restoreMessage, setRestoreMessage] = useState(null)
+  const [restoreError, setRestoreError] = useState(null)
+  const [restoring, setRestoring] = useState(false)
+  const fileInput = useRef(null)
+  const passwordGate = useRetryAfter(passwordError && typeof passwordError === 'object' ? passwordError : null)
+  const restoreGate = useRetryAfter(restoreError)
+
+  const closeDialog = () => {
+    setDialog(null)
+    setDialogError(null)
+  }
 
   const submitPassword = async (event) => {
     event.preventDefault()
@@ -30,23 +148,91 @@ export default function Account() {
       setNext('')
       setRepeat('')
     } catch (err) {
-      setPasswordError(err.message)
+      setPasswordError(err)
     } finally {
       setBusy(false)
     }
   }
 
-  const submitDelete = async (event) => {
-    event.preventDefault()
-    setDeleteError(null)
-    if (!window.confirm('Delete your account and all of your games, mistakes and progress?')) return
+  const confirmDelete = async (password) => {
     setBusy(true)
+    setDialogError(null)
     try {
-      await deleteAccount(confirmDelete)
+      await deleteAccount(password)
       endSession()
     } catch (err) {
-      setDeleteError(err.message)
+      setDialogError(err)
       setBusy(false)
+    }
+  }
+
+  const saveEmail = async (address, password) => {
+    setBusy(true)
+    setDialogError(null)
+    try {
+      const result = await setEmail(address, password)
+      setUser(result.user)
+      setDialog(null)
+      setEmailMessage(`We sent a confirmation link to ${result.user.email}. It is valid for 24 hours.`)
+    } catch (err) {
+      setDialogError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const dropEmail = async (_address, password) => {
+    setBusy(true)
+    setDialogError(null)
+    try {
+      const result = await removeEmail(password)
+      setUser(result.user)
+      setDialog(null)
+      setEmailMessage('Your email address was removed.')
+    } catch (err) {
+      setDialogError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const resend = async () => {
+    setBusy(true)
+    setEmailError(null)
+    setEmailMessage(null)
+    try {
+      await resendVerification()
+      setEmailMessage(`We sent a new confirmation link to ${user.email}.`)
+    } catch (err) {
+      setEmailError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const restore = async (event) => {
+    const file = event.target.files && event.target.files[0]
+    event.target.value = ''
+    if (!file) return
+    setRestoring(true)
+    setRestoreError(null)
+    setRestoreMessage(null)
+    try {
+      const result = await restoreBackup(file)
+      const parts = [
+        `${result.games_restored} ${result.games_restored === 1 ? 'game' : 'games'} restored`,
+        `${result.mistakes_restored} mistakes`,
+        `${result.attempts_restored} puzzle attempts`,
+      ]
+      if (result.games_already_present) parts.push(`${result.games_already_present} already present`)
+      if (result.games_unreadable) parts.push(`${result.games_unreadable} unreadable`)
+      setRestoreMessage(
+        `${parts.join(' · ')}. Run an analysis on the Games page to rebuild the move-by-move view.`,
+      )
+    } catch (err) {
+      setRestoreError(err)
+    } finally {
+      setRestoring(false)
     }
   }
 
@@ -103,15 +289,11 @@ export default function Account() {
           </div>
         </div>
         <div className="row" style={{ marginTop: 12 }}>
-          <button type="submit" className="button primary" disabled={busy}>
+          <button type="submit" className="button primary" disabled={busy || passwordGate.blocked}>
             Change password
           </button>
         </div>
-        {passwordError ? (
-          <div className="notice error" style={{ marginTop: 12 }}>
-            {passwordError}
-          </div>
-        ) : null}
+        <ErrorNotice error={passwordError} style={{ marginTop: 12 }} />
         {passwordMessage ? (
           <div className="notice good" style={{ marginTop: 12 }}>
             {passwordMessage}
@@ -120,8 +302,95 @@ export default function Account() {
       </form>
 
       <div className="card" style={{ marginTop: 16 }}>
-        <h2>Your data</h2>
-        <p className="subtitle">Download every mistake that was found in your games.</p>
+        <h2>Email</h2>
+        {info.email_enabled ? (
+          <>
+            <p className="subtitle">
+              {user?.email ? (
+                <>
+                  <strong>{user.email}</strong>{' '}
+                  {user.email_verified ? '(confirmed)' : '(waiting for confirmation)'}.
+                </>
+              ) : (
+                'No email address on this account.'
+              )}{' '}
+              A confirmed address lets you reset a forgotten password by email.
+            </p>
+            <div className="row">
+              <button
+                type="button"
+                className="button"
+                disabled={busy}
+                onClick={() => setDialog({ type: 'email' })}
+              >
+                {user?.email ? 'Change address' : 'Add email address'}
+              </button>
+              {user?.email && !user.email_verified ? (
+                <button type="button" className="button" disabled={busy} onClick={resend}>
+                  Resend confirmation
+                </button>
+              ) : null}
+              {user?.email ? (
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy}
+                  onClick={() => setDialog({ type: 'remove-email' })}
+                >
+                  Remove address
+                </button>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <p className="subtitle">
+            Email is not set up on this server. If you forget your password, ask the
+            administrator for a reset link.
+          </p>
+        )}
+        <ErrorNotice error={emailError} style={{ marginTop: 12 }} />
+        {emailMessage ? (
+          <div className="notice good" style={{ marginTop: 12 }}>
+            {emailMessage}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <h2>Backup and restore</h2>
+        <p className="subtitle">
+          A backup holds your games, every mistake found, your puzzle attempts and your latest
+          profile. Restoring adds games that are not already in your library; it never overwrites
+          what you have.
+        </p>
+        <div className="row">
+          <a className="button" href={backupUrl()}>
+            Download backup (JSON)
+          </a>
+          <button
+            type="button"
+            className="button"
+            disabled={restoring || restoreGate.blocked}
+            onClick={() => fileInput.current && fileInput.current.click()}
+          >
+            {restoring ? 'Restoring…' : 'Restore from backup'}
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            aria-label="Backup file"
+            onChange={restore}
+          />
+        </div>
+        <ErrorNotice error={restoreError} style={{ marginTop: 12 }} />
+        {restoreMessage ? (
+          <div className="notice good" style={{ marginTop: 12 }}>
+            {restoreMessage}
+          </div>
+        ) : null}
+        <h3 style={{ marginTop: 20 }}>Mistakes only</h3>
         <div className="row">
           <a className="button" href={exportUrl('csv')}>
             Download CSV
@@ -132,35 +401,54 @@ export default function Account() {
         </div>
       </div>
 
-      <form className="card" style={{ marginTop: 16 }} onSubmit={submitDelete}>
+      <div className="card" style={{ marginTop: 16 }}>
         <h2>Delete account</h2>
         <p className="subtitle">
           This permanently removes your account, games, analysis and training progress.
         </p>
-        <div className="filters">
-          <div className="field">
-            <label htmlFor="delete-password">Confirm with your password</label>
-            <input
-              id="delete-password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={confirmDelete}
-              onChange={(event) => setConfirmDelete(event.target.value)}
-            />
-          </div>
-        </div>
-        <div className="row" style={{ marginTop: 12 }}>
-          <button type="submit" className="button danger" disabled={busy}>
-            Delete my account
+        <div className="row">
+          <button
+            type="button"
+            className="button danger"
+            disabled={busy}
+            onClick={() => setDialog({ type: 'delete' })}
+          >
+            Delete my account…
           </button>
         </div>
-        {deleteError ? (
-          <div className="notice error" style={{ marginTop: 12 }}>
-            {deleteError}
-          </div>
-        ) : null}
-      </form>
+      </div>
+
+      {dialog && dialog.type === 'delete' ? (
+        <DeleteDialog
+          busy={busy}
+          error={dialogError}
+          onConfirm={confirmDelete}
+          onCancel={closeDialog}
+        />
+      ) : null}
+      {dialog && dialog.type === 'email' ? (
+        <EmailDialog
+          title={user?.email ? 'Change email address' : 'Add an email address'}
+          description="We will send a confirmation link to the new address. The old address stops working for password resets until you confirm the new one."
+          confirmLabel="Send confirmation"
+          withAddress
+          busy={busy}
+          error={dialogError}
+          onSubmit={saveEmail}
+          onCancel={closeDialog}
+        />
+      ) : null}
+      {dialog && dialog.type === 'remove-email' ? (
+        <EmailDialog
+          title="Remove your email address?"
+          description="You will not be able to reset a forgotten password by email until you add one again."
+          confirmLabel="Remove address"
+          busy={busy}
+          error={dialogError}
+          onSubmit={dropEmail}
+          onCancel={closeDialog}
+        />
+      ) : null}
     </div>
   )
 }

@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { useRetryAfter } from '../hooks/useRetryAfter.js'
 import { uploadAndAnalyze } from '../services/analysisService.js'
+import ErrorNotice from './ErrorNotice.jsx'
 
 export default function UploadForm({ onUploaded, disabled = false }) {
   const [file, setFile] = useState(null)
@@ -11,6 +13,7 @@ export default function UploadForm({ onUploaded, disabled = false }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
+  const gate = useRetryAfter(error && typeof error === 'object' ? error : null)
 
   const submit = async (event) => {
     event.preventDefault()
@@ -32,7 +35,7 @@ export default function UploadForm({ onUploaded, disabled = false }) {
       setResult(summary)
       if (onUploaded) onUploaded(summary)
     } catch (err) {
-      setError(err.message)
+      setError(err)
     } finally {
       setBusy(false)
     }
@@ -110,7 +113,7 @@ export default function UploadForm({ onUploaded, disabled = false }) {
       </div>
 
       <div className="row">
-        <button type="submit" className="button primary" disabled={busy || disabled}>
+        <button type="submit" className="button primary" disabled={busy || disabled || gate.blocked}>
           {busy ? 'Uploading…' : 'Upload and analyze'}
         </button>
         {busy ? <span className="spinner" aria-hidden="true" /> : null}
@@ -119,11 +122,7 @@ export default function UploadForm({ onUploaded, disabled = false }) {
         ) : null}
       </div>
 
-      {error ? (
-        <div className="notice error" style={{ marginTop: 12 }}>
-          {error}
-        </div>
-      ) : null}
+      <ErrorNotice error={error} style={{ marginTop: 12 }} />
 
       {result ? (
         <div className={result.job ? 'notice good' : 'notice'} style={{ marginTop: 12 }}>

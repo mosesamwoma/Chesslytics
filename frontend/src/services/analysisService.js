@@ -26,8 +26,12 @@ export function cancelJob(jobId) {
   return post(`/api/analysis/jobs/${jobId}/cancel`, {})
 }
 
-export function listJobs(limit = 10) {
-  return get(`/api/analysis/jobs?limit=${limit}`)
+export function listJobs(limit = 10, offset = 0) {
+  return get(`/api/analysis/jobs?limit=${limit}&offset=${offset}`)
+}
+
+export function retryJob(jobId) {
+  return post(`/api/analysis/jobs/${jobId}/retry`, {})
 }
 
 export function isFinished(job) {

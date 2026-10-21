@@ -6,11 +6,15 @@ import NavBar from './components/NavBar.jsx'
 import ChessDNA from './pages/ChessDNA.jsx'
 import Coach from './pages/Coach.jsx'
 import Dashboard from './pages/Dashboard.jsx'
+import ForgotPassword from './pages/ForgotPassword.jsx'
 import GameAnalysis from './pages/GameAnalysis.jsx'
 import Games from './pages/Games.jsx'
+import Jobs from './pages/Jobs.jsx'
 import Login from './pages/Login.jsx'
 import Patterns from './pages/Patterns.jsx'
+import ResetPassword from './pages/ResetPassword.jsx'
 import Training from './pages/Training.jsx'
+import VerifyEmail from './pages/VerifyEmail.jsx'
 
 function NotFound() {
   return (
@@ -45,7 +49,16 @@ export default function App() {
   }
 
   if (status === 'anonymous') {
-    return <Login />
+    return (
+      <main className="main">
+        <Routes>
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
+          <Route path="*" element={<Login />} />
+        </Routes>
+      </main>
+    )
   }
 
   return (
@@ -60,7 +73,10 @@ export default function App() {
           <Route path="/training" element={<Training />} />
           <Route path="/dna" element={<ChessDNA />} />
           <Route path="/coach" element={<Coach />} />
+          <Route path="/jobs" element={<Jobs />} />
           <Route path="/account" element={<Account />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           {user?.is_admin ? <Route path="/admin" element={<Admin />} /> : null}
           <Route path="*" element={<NotFound />} />
         </Routes>

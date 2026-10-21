@@ -18,6 +18,10 @@ export function resetUserPassword(id, newPassword) {
   return post(`/api/admin/users/${id}/password`, { new_password: newPassword })
 }
 
+export function createResetLink(id) {
+  return post(`/api/admin/users/${id}/reset-link`, {})
+}
+
 export function unlockUser(id) {
   return post(`/api/admin/users/${id}/unlock`, {})
 }

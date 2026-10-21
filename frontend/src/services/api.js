@@ -56,6 +56,14 @@ export function post(path, payload) {
   })
 }
 
+export function put(path, payload) {
+  return request(path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  })
+}
+
 export function patch(path, payload) {
   return request(path, {
     method: 'PATCH',

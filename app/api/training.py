@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -48,6 +48,7 @@ def list_puzzles(
     severity: Optional[str] = Query(default=None, max_length=16),
     player: Optional[str] = Query(default=None, max_length=128),
     unseen_only: bool = Query(default=False),
+    practice: Literal["all", "queue", "due", "new"] = Query(default="all"),
     limit: int = Query(20, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(auth.current_user),
@@ -62,6 +63,7 @@ def list_puzzles(
         unseen_only=unseen_only,
         limit=limit,
         offset=offset,
+        practice=practice,
     )
     return {
         "total": total,
@@ -78,7 +80,9 @@ def get_puzzle(
 ) -> dict:
     mistake = _mistake_or_404(db, user, puzzle_id)
     puzzle = training_service.to_puzzle(
-        mistake, training_service.attempt_summary(db, user.id, mistake.id)
+        mistake,
+        training_service.attempt_summary(db, user.id, mistake.id),
+        training_service.review_states(db, user.id, [mistake.id]).get(mistake.id),
     )
     if puzzle is None:
         raise HTTPException(

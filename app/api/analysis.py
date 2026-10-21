@@ -197,11 +197,18 @@ async def upload_and_analyze(
 @router.get("/jobs")
 def list_jobs(
     limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
     user: User = Depends(auth.current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     return {
-        "jobs": [job_service.job_payload(job) for job in job_service.list_jobs(db, user.id, limit)]
+        "total": job_service.count_jobs(db, user.id),
+        "limit": limit,
+        "offset": offset,
+        "jobs": [
+            job_service.job_payload(job)
+            for job in job_service.list_jobs(db, user.id, limit, offset)
+        ],
     }
 
 
@@ -229,6 +236,24 @@ def cancel_job(
     job_service.request_cancel(db, job)
     db.commit()
     return {"job": job_service.job_payload(job)}
+
+
+@router.post("/jobs/{job_id}/retry", status_code=202)
+def retry_job(
+    job_id: int,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    job = job_service.get_job(db, user.id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status in job_service.ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="that analysis is still in progress")
+    try:
+        params = job_service.retry_params(db, user.id, job)
+    except job_service.JobRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return {"job": start_job(db, user, params)}
 
 
 @router.get("/export")

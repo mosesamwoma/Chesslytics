@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import ErrorNotice from '../components/ErrorNotice.jsx'
+import { useRetryAfter } from '../hooks/useRetryAfter.js'
 import * as coachService from '../services/coachService.js'
 
 export default function Coach() {
@@ -7,6 +9,7 @@ export default function Coach() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [regenerating, setRegenerating] = useState(false)
+  const gate = useRetryAfter(error)
 
   const load = useCallback((refresh) => {
     const setBusy = refresh ? setRegenerating : setLoading
@@ -28,9 +31,18 @@ export default function Coach() {
     load(false)
   }, [load])
 
-  if (error) {
+  if (error && !data) {
     const missing = error.status === 404
     const noKey = error.status === 503
+    if (!missing && !noKey) {
+      return (
+        <ErrorNotice error={error}>
+          <button type="button" className="button" onClick={() => load(false)} disabled={gate.blocked}>
+            Retry
+          </button>
+        </ErrorNotice>
+      )
+    }
     return (
       <div className="notice">
         {missing ? (
@@ -38,15 +50,8 @@ export default function Coach() {
             No profile yet. Import a PGN and run an analysis on the{' '}
             <Link to="/games">Games</Link> page first.
           </>
-        ) : noKey ? (
-          <>Set GEMINI_API_KEY on the backend to enable AI coaching commentary.</>
         ) : (
-          <>
-            {error.message}{' '}
-            <button type="button" className="button" onClick={() => load(false)}>
-              Retry
-            </button>
-          </>
+          <>Set GEMINI_API_KEY on the backend to enable AI coaching commentary.</>
         )}
       </div>
     )
@@ -70,11 +75,13 @@ export default function Coach() {
           type="button"
           className="button"
           onClick={() => load(true)}
-          disabled={regenerating}
+          disabled={regenerating || gate.blocked}
         >
           {regenerating ? 'Regenerating…' : 'Regenerate'}
         </button>
       </div>
+
+      <ErrorNotice error={error} style={{ marginBottom: 16 }} />
 
       <div className="card">
         <h2>The big picture</h2>
@@ -82,7 +89,7 @@ export default function Coach() {
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
-        <h2>This week's drill</h2>
+        <h2>This week&apos;s drill</h2>
         <p>{data.focus_drill}</p>
       </div>
 

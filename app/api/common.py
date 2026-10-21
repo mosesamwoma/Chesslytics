@@ -7,8 +7,8 @@ from app import settings
 CHUNK_BYTES = 1024 * 256
 
 
-async def read_upload(file: UploadFile) -> str:
-    limit = settings.max_upload_bytes()
+async def read_upload(file: UploadFile, limit: int | None = None) -> str:
+    limit = limit if limit is not None else settings.max_upload_bytes()
     chunks: list[bytes] = []
     size = 0
     while True:

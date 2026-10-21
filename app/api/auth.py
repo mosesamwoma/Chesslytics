@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import auth, security, settings
+from app import auth, mailer, security, settings
 from app.database.database import get_db
 from app.database.models import User, utcnow
-from app.services import user_service
+from app.services import token_service, user_service
 
 logger = logging.getLogger("chesslytics")
 
@@ -19,6 +19,13 @@ LOGIN_IP_LIMIT = 20
 LOGIN_IP_WINDOW = 600
 REGISTER_IP_LIMIT = 5
 REGISTER_IP_WINDOW = 3600
+RESET_IP_LIMIT = 10
+RESET_IP_WINDOW = 3600
+FORGOT_IP_LIMIT = 6
+FORGOT_ADDRESS_LIMIT = 3
+FORGOT_WINDOW = 3600
+VERIFY_IP_LIMIT = 20
+VERIFY_IP_WINDOW = 3600
 
 
 class LoginRequest(BaseModel):
@@ -40,6 +47,19 @@ class AccountDeletion(BaseModel):
     password: str = Field(min_length=1, max_length=security.MAX_PASSWORD_LENGTH)
 
 
+class ForgotRequest(BaseModel):
+    identifier: str = Field(min_length=1, max_length=254)
+
+
+class ResetRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=1, max_length=security.MAX_PASSWORD_LENGTH)
+
+
+class VerifyRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=128)
+
+
 def too_many(wait: int, message: str) -> HTTPException:
     return HTTPException(
         status_code=429, detail=message, headers={"Retry-After": str(wait)}
@@ -51,6 +71,7 @@ def status() -> dict:
     return {
         "registration_enabled": settings.registration_enabled(),
         "min_password_length": security.MIN_PASSWORD_LENGTH,
+        "email_enabled": settings.email_enabled(),
     }
 
 
@@ -76,7 +97,7 @@ def register(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     auth.set_session_cookie(response, request, user)
-    return {"user": user_service.user_payload(user)}
+    return {"user": user_service.user_payload(user, private=True)}
 
 
 @router.post("/login")
@@ -112,7 +133,7 @@ def login(
     user_service.audit(db, "auth.login", actor=user, ip=ip)
     db.commit()
     auth.set_session_cookie(response, request, user)
-    return {"user": user_service.user_payload(user)}
+    return {"user": user_service.user_payload(user, private=True)}
 
 
 @router.post("/logout")
@@ -123,7 +144,85 @@ def logout(request: Request, response: Response) -> dict:
 
 @router.get("/me")
 def me(user: User = Depends(auth.current_user)) -> dict:
-    return {"user": user_service.user_payload(user)}
+    return {"user": user_service.user_payload(user, private=True)}
+
+
+@router.post("/forgot")
+def forgot_password(
+    payload: ForgotRequest, request: Request, db: Session = Depends(get_db)
+) -> dict:
+    if not settings.email_enabled():
+        raise HTTPException(
+            status_code=400, detail="password reset by email is not available on this server"
+        )
+    ip = security.client_ip(request)
+    wait = security.limiter.consume(f"forgot:{ip}", FORGOT_IP_LIMIT, FORGOT_WINDOW)
+    if wait:
+        raise too_many(wait, "too many requests; try again later")
+    identifier = payload.identifier.strip()
+    wait = security.limiter.consume(
+        f"forgot-id:{identifier.lower()}", FORGOT_ADDRESS_LIMIT, FORGOT_WINDOW
+    )
+    if wait:
+        raise too_many(wait, "too many requests; try again later")
+    user = user_service.find_for_reset(db, identifier)
+    if user is not None:
+        raw = token_service.issue(db, user, token_service.KIND_RESET_PASSWORD)
+        user_service.audit(db, "auth.reset_requested", actor=user, ip=ip)
+        db.commit()
+        subject, body = mailer.reset_message(f"{settings.public_url()}/reset-password?token={raw}")
+        mailer.send_async(user.email, subject, body)
+    return {"sent": True}
+
+
+@router.post("/reset")
+def reset_password(
+    payload: ResetRequest, request: Request, db: Session = Depends(get_db)
+) -> dict:
+    ip = security.client_ip(request)
+    wait = security.limiter.consume(f"reset:{ip}", RESET_IP_LIMIT, RESET_IP_WINDOW)
+    if wait:
+        raise too_many(wait, "too many attempts; try again later")
+    token = token_service.peek(db, payload.token, token_service.KIND_RESET_PASSWORD)
+    user = db.get(User, token.user_id) if token is not None else None
+    if token is None or user is None:
+        raise HTTPException(status_code=400, detail="this reset link is invalid or has expired")
+    problem = security.password_error(payload.new_password, user.username)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    if not token_service.consume(db, token):
+        db.rollback()
+        raise HTTPException(status_code=400, detail="this reset link is invalid or has expired")
+    user_service.change_password(db, user, payload.new_password)
+    token_service.discard_unused(db, user.id, token_service.KIND_RESET_PASSWORD)
+    user_service.audit(db, "auth.password_reset", actor=user, ip=ip)
+    db.commit()
+    return {"reset": True}
+
+
+@router.post("/verify-email")
+def verify_email(
+    payload: VerifyRequest, request: Request, db: Session = Depends(get_db)
+) -> dict:
+    ip = security.client_ip(request)
+    wait = security.limiter.consume(f"verify:{ip}", VERIFY_IP_LIMIT, VERIFY_IP_WINDOW)
+    if wait:
+        raise too_many(wait, "too many attempts; try again later")
+    token = token_service.peek(db, payload.token, token_service.KIND_VERIFY_EMAIL)
+    user = db.get(User, token.user_id) if token is not None else None
+    if token is None or user is None or not token.email:
+        raise HTTPException(
+            status_code=400, detail="this confirmation link is invalid or has expired"
+        )
+    try:
+        user_service.confirm_email(db, user, token.email)
+    except user_service.UserError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    token_service.consume(db, token)
+    user_service.audit(db, "user.email_verified", actor=user, ip=ip)
+    db.commit()
+    return {"verified": True}
 
 
 @router.post("/password")

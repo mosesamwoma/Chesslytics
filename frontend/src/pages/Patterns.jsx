@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import ErrorNotice from '../components/ErrorNotice.jsx'
+import OpeningsTable from '../components/OpeningsTable.jsx'
 import PatternCard from '../components/PatternCard.jsx'
-import { listPatterns } from '../services/patternsService.js'
+import { useAsync } from '../hooks/useAsync.js'
+import { getOpenings, listPatterns } from '../services/patternsService.js'
 import { PATTERN_KIND_LABELS } from '../labels.js'
 
 export default function Patterns() {
@@ -10,6 +13,7 @@ export default function Patterns() {
   const [loading, setLoading] = useState(true)
   const [kind, setKind] = useState('all')
   const [recurringOnly, setRecurringOnly] = useState(false)
+  const openings = useAsync(() => getOpenings(1), [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -63,9 +67,11 @@ export default function Patterns() {
       </div>
 
       {error ? (
-        <div className="notice error">
-          {error.message} <button type="button" className="button" onClick={load}>Retry</button>
-        </div>
+        <ErrorNotice error={error}>
+          <button type="button" className="button" onClick={load}>
+            Retry
+          </button>
+        </ErrorNotice>
       ) : null}
 
       {!error && !loading && !patterns.length ? (
@@ -122,6 +128,17 @@ export default function Patterns() {
           </div>
         </>
       ) : null}
+
+      <div className="card" style={{ marginTop: 24 }}>
+        <h2>Openings</h2>
+        {openings.error ? (
+          <ErrorNotice error={openings.error} />
+        ) : openings.data ? (
+          <OpeningsTable report={openings.data} />
+        ) : (
+          <p className="muted">Loading&hellip;</p>
+        )}
+      </div>
     </div>
   )
 }

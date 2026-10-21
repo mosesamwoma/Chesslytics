@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AnalysisChart from '../components/AnalysisChart.jsx'
 import ChessBoard, { squareFromUci } from '../components/ChessBoard.jsx'
+import ErrorNotice from '../components/ErrorNotice.jsx'
 import JobProgress from '../components/JobProgress.jsx'
 import MistakeCard from '../components/MistakeCard.jsx'
 import useJobRunner from '../hooks/useJobRunner.js'
@@ -74,9 +75,9 @@ export default function GameAnalysis() {
 
   if (error && !data) {
     return (
-      <div className="notice error">
-        {error.message} <Link to="/games">Back to games</Link>
-      </div>
+      <ErrorNotice error={error}>
+        <Link to="/games">Back to games</Link>
+      </ErrorNotice>
     )
   }
 
@@ -125,11 +126,7 @@ export default function GameAnalysis() {
         </div>
       ) : null}
 
-      {error || runner.error ? (
-        <div className="notice error" style={{ marginBottom: 16 }}>
-          {(error || runner.error).message}
-        </div>
-      ) : null}
+      <ErrorNotice error={error || runner.error} style={{ marginBottom: 16 }} />
 
       {moves.length ? (
         <>

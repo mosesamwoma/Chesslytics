@@ -10,13 +10,22 @@ function query(params) {
   return text ? `?${text}` : ''
 }
 
-export function listPuzzles({ category, severity, player, unseenOnly, limit, offset } = {}) {
+export function listPuzzles({
+  category,
+  severity,
+  player,
+  unseenOnly,
+  practice,
+  limit,
+  offset,
+} = {}) {
   return get(
     `/api/training/puzzles${query({
       category,
       severity,
       player,
       unseen_only: unseenOnly,
+      practice,
       limit,
       offset,
     })}`,

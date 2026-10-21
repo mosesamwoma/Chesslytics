@@ -1,5 +1,8 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
+import ErrorNotice from '../components/ErrorNotice.jsx'
+import { useRetryAfter } from '../hooks/useRetryAfter.js'
 
 export default function Login() {
   const { login, register, info } = useAuth()
@@ -9,6 +12,7 @@ export default function Login() {
   const [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const gate = useRetryAfter(error && typeof error === 'object' ? error : null)
 
   const creating = mode === 'register'
 
@@ -34,14 +38,13 @@ export default function Login() {
         await login(username.trim(), password)
       }
     } catch (err) {
-      setError(err.message)
+      setError(err)
       setBusy(false)
     }
   }
 
   return (
-    <main className="main">
-      <form className="card login" onSubmit={submit}>
+    <form className="card login" onSubmit={submit}>
         <h1>Chesslytics</h1>
         <p className="subtitle">
           {creating ? 'Create your account.' : 'Sign in to continue.'}
@@ -90,10 +93,21 @@ export default function Login() {
             </span>
           </div>
         ) : null}
-        {error ? <div className="notice error">{error}</div> : null}
-        <button type="submit" className="button primary" disabled={busy}>
+        <ErrorNotice error={error} />
+        <button type="submit" className="button primary" disabled={busy || gate.blocked}>
           {busy ? 'Please wait…' : creating ? 'Create account' : 'Sign in'}
         </button>
+        {!creating ? (
+          info.email_enabled ? (
+            <p className="muted">
+              <Link to="/forgot-password">Forgot your password?</Link>
+            </p>
+          ) : (
+            <p className="muted">
+              Forgot your password? Ask the administrator for a reset link.
+            </p>
+          )
+        ) : null}
         {creating ? (
           <button type="button" className="button" onClick={() => switchMode('login')}>
             I already have an account
@@ -105,7 +119,6 @@ export default function Login() {
         ) : (
           <p className="muted">Registration is currently closed.</p>
         )}
-      </form>
-    </main>
+    </form>
   )
 }

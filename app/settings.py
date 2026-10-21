@@ -159,3 +159,60 @@ def job_retention_days() -> int:
 
 def profiles_kept_per_user() -> int:
     return env_int("PROFILES_KEPT_PER_USER", 5, minimum=1, maximum=100)
+
+
+def public_url() -> str:
+    value = env_str("PUBLIC_URL").rstrip("/")
+    if value.startswith(("http://", "https://")):
+        return value
+    return ""
+
+
+def smtp_host() -> str:
+    return env_str("SMTP_HOST")
+
+
+def smtp_port() -> int:
+    return env_int("SMTP_PORT", 587, minimum=1, maximum=65535)
+
+
+def smtp_user() -> str:
+    return env_str("SMTP_USER")
+
+
+def smtp_password() -> str:
+    value = os.environ.get("SMTP_PASSWORD")
+    return value if value is not None else ""
+
+
+def smtp_from() -> str:
+    return env_str("SMTP_FROM")
+
+
+def smtp_security() -> str:
+    value = env_str("SMTP_SECURITY", "starttls").lower()
+    return value if value in ("starttls", "ssl", "none") else "starttls"
+
+
+def email_enabled() -> bool:
+    return bool(smtp_host() and smtp_from() and public_url())
+
+
+def max_backup_bytes() -> int:
+    return env_int("MAX_BACKUP_MB", 32, minimum=1, maximum=256) * 1024 * 1024
+
+
+def log_format() -> str:
+    return "json" if env_str("LOG_FORMAT", "text").lower() == "json" else "text"
+
+
+def sentry_dsn() -> str:
+    return env_str("SENTRY_DSN")
+
+
+def sentry_environment() -> str:
+    return env_str("SENTRY_ENVIRONMENT", "production")
+
+
+def sentry_traces_rate() -> float:
+    return env_float("SENTRY_TRACES_SAMPLE_RATE", 0.0, minimum=0.0, maximum=1.0)

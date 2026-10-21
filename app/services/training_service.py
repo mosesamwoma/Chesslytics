@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import chess
@@ -12,12 +13,15 @@ from sqlalchemy.orm import Session
 from app import settings
 from app.chess.engine import ChessEngine, SearchLimit, find_stockfish
 from app.chess.evaluator import clamp_loss, win_percent
-from app.database.models import Mistake, PuzzleAttempt
+from app.database.models import Mistake, PuzzleAttempt, utcnow
 from app.services import analysis_service
 
 DEFAULT_TOLERANCE_WINPCT = 5.0
 WEAK_CATEGORY_MIN_ATTEMPTS = 3
 GRADING_WAIT_SECONDS = 15.0
+REVIEW_INTERVAL_HOURS = (0.25, 24.0, 72.0, 168.0, 336.0, 720.0)
+MAX_BOX = len(REVIEW_INTERVAL_HOURS) - 1
+PRACTICE_MODES = ("all", "queue", "due", "new")
 
 _grading_slots = threading.BoundedSemaphore(settings.max_concurrent_grading())
 
@@ -91,12 +95,75 @@ def attempts_for(session: Session, user_id: int, mistake_ids: list[int]) -> dict
     }
 
 
-def to_puzzle(mistake: Mistake, tally: Optional[dict] = None) -> Optional[dict]:
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _fold_attempts(rows) -> dict[int, dict]:
+    states: dict[int, dict] = {}
+    for mistake_id, correct, created_at in rows:
+        state = states.setdefault(
+            mistake_id, {"box": 0, "attempts": 0, "solved": 0, "last": None}
+        )
+        state["attempts"] += 1
+        if correct:
+            state["solved"] += 1
+            state["box"] = min(state["box"] + 1, MAX_BOX)
+        else:
+            state["box"] = 0
+        state["last"] = _aware(created_at)
+    now = utcnow()
+    for state in states.values():
+        due_at = state["last"] + timedelta(hours=REVIEW_INTERVAL_HOURS[state["box"]])
+        state["due_at"] = due_at
+        state["due"] = due_at <= now
+    return states
+
+
+def review_states(
+    session: Session, user_id: int, mistake_ids: Optional[list[int]] = None
+) -> dict[int, dict]:
+    statement = select(
+        PuzzleAttempt.mistake_id, PuzzleAttempt.correct, PuzzleAttempt.created_at
+    ).where(PuzzleAttempt.user_id == user_id)
+    if mistake_ids is not None:
+        if not mistake_ids:
+            return {}
+        statement = statement.where(PuzzleAttempt.mistake_id.in_(mistake_ids))
+    rows = session.execute(
+        statement.order_by(PuzzleAttempt.created_at, PuzzleAttempt.id)
+    ).all()
+    return _fold_attempts(rows)
+
+
+def review_summary(state: Optional[dict]) -> dict:
+    if not state:
+        return {"status": "new", "box": 0, "due": False, "due_at": None}
+    if state["due"]:
+        status = "due"
+    elif state["box"] >= MAX_BOX:
+        status = "mastered"
+    else:
+        status = "learning"
+    return {
+        "status": status,
+        "box": state["box"],
+        "due": bool(state["due"]),
+        "due_at": state["due_at"].isoformat(),
+    }
+
+
+def to_puzzle(
+    mistake: Mistake, tally: Optional[dict] = None, state: Optional[dict] = None
+) -> Optional[dict]:
     board = board_for(mistake)
     if board is None:
         return None
     tally = tally or {}
     return {
+        "review": review_summary(state),
         "id": mistake.id,
         "game_id": mistake.game_id,
         "fen": mistake.fen,
@@ -157,6 +224,82 @@ def puzzle_query(
     return statement
 
 
+def _practice_order(
+    session: Session,
+    user_id: int,
+    category: Optional[str],
+    severity: Optional[str],
+    player: Optional[str],
+    practice: str,
+) -> tuple[list[int], dict[int, dict]]:
+    candidates = session.execute(
+        puzzle_query(user_id, category, severity, player)
+        .with_only_columns(Mistake.id, Mistake.loss_cp)
+        .order_by(Mistake.loss_cp.desc(), Mistake.id)
+    ).all()
+    states = review_states(session, user_id, [row[0] for row in candidates])
+
+    due: list[tuple[datetime, int]] = []
+    waiting: list[tuple[datetime, int]] = []
+    fresh: list[int] = []
+    for mistake_id, _loss in candidates:
+        state = states.get(mistake_id)
+        if state is None:
+            fresh.append(mistake_id)
+        elif state["due"]:
+            due.append((state["due_at"], mistake_id))
+        else:
+            waiting.append((state["due_at"], mistake_id))
+    due.sort()
+    waiting.sort()
+
+    if practice == "due":
+        ordered = [mistake_id for _, mistake_id in due]
+    elif practice == "new":
+        ordered = fresh
+    else:
+        ordered = (
+            [mistake_id for _, mistake_id in due]
+            + fresh
+            + [mistake_id for _, mistake_id in waiting]
+        )
+    return ordered, states
+
+
+def _list_by_practice(
+    session: Session,
+    user_id: int,
+    category: Optional[str],
+    severity: Optional[str],
+    player: Optional[str],
+    practice: str,
+    limit: int,
+    offset: int,
+) -> tuple[list[dict], int]:
+    ordered, states = _practice_order(session, user_id, category, severity, player, practice)
+    page = ordered[max(0, offset) : max(0, offset) + max(1, min(limit, 200))]
+    if not page:
+        return [], len(ordered)
+    rows = {
+        mistake.id: mistake
+        for mistake in session.scalars(select(Mistake).where(Mistake.id.in_(page)))
+    }
+    puzzles = []
+    for mistake_id in page:
+        mistake = rows.get(mistake_id)
+        if mistake is None:
+            continue
+        state = states.get(mistake_id)
+        tally = {
+            "attempts": state["attempts"] if state else 0,
+            "solved": state["solved"] if state else 0,
+        }
+        puzzle = to_puzzle(mistake, tally, state)
+        if puzzle is not None:
+            puzzles.append(puzzle)
+    return puzzles, len(ordered)
+
+
 def list_puzzles(
     session: Session,
     user_id: int,
@@ -166,7 +309,14 @@ def list_puzzles(
     unseen_only: bool = False,
     limit: int = 20,
     offset: int = 0,
+    practice: str = "all",
 ) -> tuple[list[dict], int]:
+    if unseen_only and practice == "all":
+        practice = "new"
+    if practice != "all":
+        return _list_by_practice(
+            session, user_id, category, severity, player, practice, limit, offset
+        )
     tally = (
         select(
             PuzzleAttempt.mistake_id.label("mistake_id"),
@@ -201,9 +351,12 @@ def list_puzzles(
         .offset(max(0, offset))
     ).all()
 
+    states = review_states(session, user_id, [mistake.id for mistake, _, _ in rows])
     puzzles = []
     for mistake, attempts, solved in rows:
-        puzzle = to_puzzle(mistake, {"attempts": attempts, "solved": solved})
+        puzzle = to_puzzle(
+            mistake, {"attempts": attempts, "solved": solved}, states.get(mistake.id)
+        )
         if puzzle is not None:
             puzzles.append(puzzle)
 
@@ -311,6 +464,9 @@ def grade(
     )
     session.flush()
     result["attempts"] = attempt_summary(session, user_id, mistake.id)
+    result["review"] = review_summary(
+        review_states(session, user_id, [mistake.id]).get(mistake.id)
+    )
     return result
 
 
@@ -403,7 +559,25 @@ def stats(session: Session, user_id: int) -> dict:
         or 0
     )
 
+    available = set(
+        session.scalars(
+            select(Mistake.id).where(Mistake.user_id == user_id, Mistake.fen.is_not(None))
+        )
+    )
+    states = {
+        mistake_id: state
+        for mistake_id, state in review_states(session, user_id).items()
+        if mistake_id in available
+    }
+    due_now = sum(1 for state in states.values() if state["due"])
+    mastered = sum(
+        1 for state in states.values() if not state["due"] and state["box"] >= MAX_BOX
+    )
+
     return {
+        "due_now": due_now,
+        "new_puzzles": len(available) - len(states),
+        "mastered": mastered,
         "attempts": total,
         "correct": correct,
         "accuracy": round(100.0 * correct / total, 1) if total else 0.0,

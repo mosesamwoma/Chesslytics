@@ -23,6 +23,24 @@ services:
         value: "12"
       - key: MAX_CONCURRENT_JOBS
         value: "1"
+      - key: LOG_FORMAT
+        value: json
+      - key: PUBLIC_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURITY
+        value: starttls
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL

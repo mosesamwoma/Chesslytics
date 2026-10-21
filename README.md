@@ -16,9 +16,12 @@ seeing anyone's games.
 - **Static exchange evaluation** for hanging-piece detection and **tactical motif** detection (mates, forks, pins, skewers).
 - **Mistake mining**: severity bands, game phase, time-pressure flags, opening-book awareness and a fixed-priority category system.
 - **Patterns, Chess DNA and Coach**: recurring categories, weak openings, evidence-only observations and optional AI coaching through Gemini.
-- **Training mode**: every stored mistake becomes a puzzle, graded on winning-chance loss. Progress survives re-analysis.
+- **Training mode**: every stored mistake becomes a puzzle, graded on winning-chance loss. Spaced repetition brings puzzles you got wrong back at growing intervals. Progress survives re-analysis.
+- **Progress and openings**: weekly charts of average loss and mistakes per 100 moves, and a per-opening report with win rate, average loss and the move where you most often go wrong.
 - **Background analysis**: uploads return immediately; analysis runs in a bounded worker pool with live progress and cancel.
-- **Accounts and administration**: registration, sign-in, password change, account deletion, and an admin console.
+- **Accounts and administration**: registration, sign-in, password change, optional email confirmation and password reset by email, one-time reset links created by an administrator, account deletion, and an admin console.
+- **Backup and restore**: download everything you own as one JSON file and restore it later.
+- **Operations**: request IDs, optional JSON logs, an analysis history page with retry, and optional Sentry error tracking.
 - **Exports** in JSON, CSV and JSONL, plus a CLI for batch work.
 
 ## Security model
@@ -112,6 +115,11 @@ Back up the `postgres-data` volume, for example with
 | `ADMIN_PASSWORD` | 10 or more characters, not containing the username |
 | `SECRET_KEY` | generated automatically by the blueprint |
 | `TRUSTED_PROXY_HOPS` | `1` (set by the blueprint; see the note below) |
+| `PUBLIC_URL` | optional: your Render address, for example `https://chesslytics.onrender.com` |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | optional: a mail server, to enable password reset by email |
+| `SENTRY_DSN` | optional: a Sentry project address |
+
+The blueprint asks for each optional value; leave the ones you do not need empty.
 
 Check in the admin console's activity log that sign-in events show real client addresses. If
 every event shows the same address, increase `TRUSTED_PROXY_HOPS` by one.
@@ -157,17 +165,35 @@ On platforms without a shell, set `ADMIN_PASSWORD` to a new value together with
 `ADMIN_RESET_PASSWORD=true`, deploy once, then remove `ADMIN_RESET_PASSWORD`.
 
 To close sign-ups set `ALLOW_REGISTRATION=false`; create accounts yourself with `app.manage`.
-Sign-up is also limited to 5 accounts per hour per address. There is no e-mail verification or
-self-service password reset, because no mail server is configured; administrators reset
-passwords.
+Sign-up is also limited to 5 accounts per hour per address.
+
+**Forgotten passwords.** An administrator can open **Admin**, choose **Reset link** next to a user
+and send them the one-time link (it works once and expires after one hour; the administrator never
+sees or sets the password). If you configure email (see below), users with a confirmed address can
+also reset their own password from the sign-in page. Administrators cannot reset their own password
+from the Admin page; they use **Account**, or `python -m app.manage reset-password`.
+
+**Email (optional).** Set `PUBLIC_URL` and the `SMTP_*` variables. Users add an address on the
+**Account** page, receive a confirmation link, and only a confirmed address can be used for
+password reset. Each confirmed address belongs to one account. Without these settings the email
+features are hidden and everything else works.
 
 ## Using the application
 
 - **Games**: upload a `.pgn` file. It is stored, then analysed in the background. You can leave the page and come back; progress resumes.
-- **Dashboard, Patterns, Chess DNA**: aggregate views of your mistakes.
-- **Training**: replay the position before each mistake and get graded by the engine.
+- **Analyses**: every analysis you started, with status, duration and settings. Cancel one that is running, or run a finished one again.
+- **Dashboard**: aggregate views of your mistakes plus **Your progress**, two weekly charts (average loss per move, mistakes per 100 moves). Lower is better. Weeks start on Monday and use the game date, falling back to the upload date.
+- **Patterns**: recurring patterns, and an **Openings** table with games, win rate, average loss and the move number where mistakes cluster. Win rates need your username to be entered when you analyse.
+- **Chess DNA**: your mistake profile.
+- **Training**: replay the position before each mistake and get graded by the engine. **Practice** modes: smart review (due first, then new), due for review, new puzzles, every puzzle. A right answer moves a puzzle up one of five boxes (reviewed again after 1, 3, 7, 14 and 30 days); a wrong answer sends it back to the start (15 minutes).
 - **Coach**: optional AI summary of your profile (needs `GEMINI_API_KEY`; limited per user per day).
-- **Account**: change your password, download your data, delete your account.
+- **Account**: change your password, manage your email address, download a backup or restore one, export mistakes, delete your account.
+
+**Backup and restore.** The backup is one JSON file with your games, every mistake, your puzzle
+attempts and your latest profile. Restoring only adds games you do not already have, never
+overwrites anything, checks every field, and respects the library size limit. Move-by-move data is
+not included (it can be rebuilt): after a restore, run an analysis on the Games page and your
+puzzle history is kept.
 
 Re-analysing a single game updates that game's moves and mistakes but leaves your Chess DNA
 profile alone. Uploading or choosing **Analyze stored games** builds a new profile from the games
@@ -209,17 +235,21 @@ cookie. Every `POST`, `PATCH` and `DELETE` needs the `X-CSRF-Protection: 1` head
 | `POST` | `/api/auth/register`, `/login`, `/logout` | Account creation and sessions |
 | `GET` / `DELETE` | `/api/auth/me` | Current user / delete own account |
 | `POST` | `/api/auth/password` | Change password |
+| `POST` | `/api/auth/forgot`, `/reset`, `/verify-email` | Password reset and email confirmation (public, rate limited; need email configured) |
+| `PUT` / `DELETE` / `POST` | `/api/account/email`, `/api/account/email/resend` | Manage your email address |
+| `GET` / `POST` | `/api/account/backup`, `/api/account/backup/restore` | Download or restore a backup |
 | `POST` | `/api/games/upload` | Store games without analysing |
 | `GET` / `DELETE` | `/api/games`, `/api/games/{id}` | Library |
 | `POST` | `/api/analysis/upload` | Store games and start an analysis job |
 | `POST` | `/api/analysis/run` | Analyse stored games (optional `game_ids`, `update_profile`) |
-| `GET` | `/api/analysis/jobs`, `/jobs/{id}` | Job status and progress |
-| `POST` | `/api/analysis/jobs/{id}/cancel` | Cancel a job |
+| `GET` | `/api/analysis/jobs`, `/jobs/{id}` | Job history (`limit`, `offset`) and status |
+| `POST` | `/api/analysis/jobs/{id}/cancel`, `/retry` | Cancel a job, or run a finished one again |
 | `GET` | `/api/analysis/mistakes`, `/games/{id}`, `/export` | Results and exports |
 | `GET` | `/api/patterns/overview`, `/api/patterns/profile`, `/api/patterns/profiles`, `/api/patterns` | Aggregates |
-| `GET` / `POST` | `/api/training/puzzles...`, `/stats`, `/attempts` | Training |
+| `GET` | `/api/patterns/progress`, `/api/patterns/openings` | Weekly progress and per-opening report |
+| `GET` / `POST` | `/api/training/puzzles...` (`practice=queue\|due\|new\|all`), `/stats`, `/attempts` | Training |
 | `GET` | `/api/coach` | AI coaching report |
-| `GET` / `PATCH` / `POST` / `DELETE` | `/api/admin/stats`, `/users`, `/audit` | Administrators only |
+| `GET` / `PATCH` / `POST` / `DELETE` | `/api/admin/stats`, `/users`, `/users/{id}/reset-link`, `/audit` | Administrators only |
 
 Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs`.
 
@@ -250,6 +280,11 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 | `MAX_QUEUED_JOBS` | `40` | Waiting analyses before new ones are refused. |
 | `MAX_CONCURRENT_GRADING` | `2` | Simultaneous training gradings. |
 | `COACH_DAILY_LIMIT` | `10` | Coach reports per user per day. |
+| `MAX_BACKUP_MB` | `32` | Largest backup file a user may restore. |
+| `PUBLIC_URL` | none | Address people use in the browser, no trailing slash. Needed for links in emails. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | none, `587`, `starttls` | Mail server. `SMTP_SECURITY` is `starttls`, `ssl` or `none`. Email features turn on when `PUBLIC_URL`, `SMTP_HOST` and `SMTP_FROM` are all set. |
+| `LOG_FORMAT` | `text` | `json` for log services. Every response carries an `X-Request-ID`, and every log line includes it. |
+| `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE` | none, `production`, `0` | Optional error tracking. Cookies, passwords, request bodies and query strings are never sent. |
 | `PROFILES_KEPT_PER_USER`, `JOB_RETENTION_DAYS` | `5`, `14` | History kept. |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE` | `5`, `5`, `300` | Connection pool tuning. |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | none, `gemini-2.5-flash` | Enables Coach. |
@@ -264,6 +299,8 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 - Analysis jobs interrupted by a restart are marked failed (queued ones are resumed).
 - Heuristic tactics detection (SEE, motifs) is not a full tactics solver.
 - Time-pressure statistics need clock annotations in the PGN (Chess.com exports have them).
+- The analysis cache file is used by the command line only. The web app stores every result in the database, so redeploys never force a re-analysis and no disk is needed.
+- Backups do not contain move-by-move data; run an analysis after restoring to rebuild it.
 - Coach output is only as good as the evidence behind it, and it sends your profile summary (not raw games) to Gemini when enabled.
 
 ## Privacy

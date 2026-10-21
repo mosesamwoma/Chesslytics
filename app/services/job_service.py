@@ -4,7 +4,7 @@ import logging
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import delete, func, select, update
@@ -51,10 +51,39 @@ def shutdown() -> None:
             _executor = None
 
 
+def _aware(value):
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def job_duration(job: AnalysisJob) -> Optional[float]:
+    started = _aware(job.started_at)
+    if started is None:
+        return None
+    finished = _aware(job.finished_at) or utcnow()
+    return round(max(0.0, (finished - started).total_seconds()), 1)
+
+
+def job_options(job: AnalysisJob) -> dict:
+    params = job.params or {}
+    config = params.get("config") or {}
+    limit = params.get("limit") or {}
+    return {
+        "player": config.get("player"),
+        "color": config.get("color", "both"),
+        "limit_kind": limit.get("kind"),
+        "limit_value": limit.get("value"),
+        "min_loss": config.get("min_loss"),
+    }
+
+
 def job_payload(job: AnalysisJob) -> dict:
     return {
         "id": job.id,
         "status": job.status,
+        "duration_seconds": job_duration(job),
+        "options": job_options(job),
         "total_games": job.total_games,
         "done_games": job.done_games,
         "message": job.message,
@@ -73,15 +102,48 @@ def get_job(session: Session, user_id: int, job_id: int) -> Optional[AnalysisJob
     )
 
 
-def list_jobs(session: Session, user_id: int, limit: int = 10) -> list[AnalysisJob]:
+def list_jobs(
+    session: Session, user_id: int, limit: int = 10, offset: int = 0
+) -> list[AnalysisJob]:
     return list(
         session.scalars(
             select(AnalysisJob)
             .where(AnalysisJob.user_id == user_id)
             .order_by(AnalysisJob.id.desc())
             .limit(limit)
+            .offset(offset)
         )
     )
+
+
+def count_jobs(session: Session, user_id: int) -> int:
+    return int(
+        session.scalar(
+            select(func.count(AnalysisJob.id)).where(AnalysisJob.user_id == user_id)
+        )
+        or 0
+    )
+
+
+def retry_params(session: Session, user_id: int, job: AnalysisJob) -> dict:
+    params = dict(job.params or {})
+    wanted = [int(value) for value in (params.get("game_ids") or [])]
+    existing = list(
+        session.scalars(
+            select(Game.id).where(Game.user_id == user_id, Game.id.in_(wanted or [0]))
+        )
+    )
+    if not existing:
+        raise JobRejected("the games from that analysis no longer exist", 400)
+    params["game_ids"] = sorted(existing)
+    limit = params.get("limit") or {}
+    value = float(limit.get("value") or 0)
+    too_deep = limit.get("kind") == "depth" and value > settings.max_analysis_depth()
+    too_long = limit.get("kind") == "time" and value > settings.max_analysis_seconds()
+    if too_deep or too_long or limit.get("kind") not in ("depth", "time"):
+        default = analysis_service.default_limit()
+        params["limit"] = {"kind": default.kind, "value": default.value}
+    return params
 
 
 def active_job(session: Session, user_id: int) -> Optional[AnalysisJob]:

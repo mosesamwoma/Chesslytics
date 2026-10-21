@@ -15,20 +15,31 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app import auth, security, settings
-from app.api import admin, analysis, auth as auth_api, coach, games, patterns, training
+from app import auth, observability, security, settings
+from app.api import (
+    account,
+    admin,
+    analysis,
+    auth as auth_api,
+    coach,
+    games,
+    patterns,
+    training,
+)
 from app.chess.engine import SearchLimit
 from app.database.database import init_db, session_scope
 from app.mining.mistake_detector import MinerConfig
 from app.mining.profiler import CATEGORY_LABELS, motif_label
-from app.services import analysis_service, export_service, job_service, user_service
-
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+from app.services import (
+    analysis_service,
+    export_service,
+    job_service,
+    token_service,
+    user_service,
 )
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+observability.configure_logging()
+observability.init_sentry()
 logger = logging.getLogger("chesslytics")
 
 DEFAULT_PGN = os.path.join("data", "games.pgn")
@@ -67,6 +78,8 @@ class BodyLimitMiddleware:
         limit = JSON_BODY_LIMIT
         if path.endswith("/upload"):
             limit = settings.max_upload_bytes() + UPLOAD_OVERHEAD
+        elif path.endswith("/restore"):
+            limit = settings.max_backup_bytes() + UPLOAD_OVERHEAD
 
         declared = dict(scope.get("headers") or []).get(b"content-length")
         if declared is not None and declared.isdigit() and int(declared) > limit:
@@ -126,6 +139,7 @@ async def lifespan(_app: FastAPI):
     with session_scope() as session:
         user_service.bootstrap_admin(session)
         user_service.prune_audit(session)
+        token_service.prune(session)
     job_service.recover_interrupted()
     yield
     job_service.shutdown()
@@ -199,13 +213,15 @@ if cors_origins():
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-CSRF-Protection"],
-        expose_headers=["Content-Disposition", "X-Mistake-Count"],
+        expose_headers=["Content-Disposition", "X-Mistake-Count", "Retry-After"],
     )
 if allowed_hosts():
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
 app.add_middleware(BodyLimitMiddleware)
+app.add_middleware(observability.RequestContextMiddleware)
 
 app.include_router(auth_api.router)
+app.include_router(account.router)
 app.include_router(admin.router)
 app.include_router(games.router)
 app.include_router(analysis.router)

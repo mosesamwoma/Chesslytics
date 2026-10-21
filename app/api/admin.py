@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app import auth, security
 from app.database.database import get_db
 from app.database.models import User
-from app.services import user_service
+from app.services import token_service, user_service
 
 router = APIRouter(
     prefix="/api/admin", tags=["admin"], dependencies=[Depends(auth.require_admin)]
@@ -106,6 +106,11 @@ def reset_password(
     db: Session = Depends(get_db),
 ) -> dict:
     target = _target(db, user_id)
+    if target.id == admin.id:
+        raise HTTPException(
+            status_code=400,
+            detail="use the Account page to change your own password",
+        )
     try:
         user_service.change_password(db, target, payload.new_password)
     except user_service.UserError as exc:
@@ -117,6 +122,31 @@ def reset_password(
     )
     db.commit()
     return {"reset": True}
+
+
+@router.post("/users/{user_id}/reset-link")
+def reset_link(
+    user_id: int,
+    request: Request,
+    admin: User = Depends(auth.require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    target = _target(db, user_id)
+    if target.id == admin.id:
+        raise HTTPException(
+            status_code=400,
+            detail="use the Account page to change your own password",
+        )
+    raw = token_service.issue(db, target, token_service.KIND_RESET_PASSWORD)
+    user_service.audit(
+        db, "admin.reset_link", actor=admin, target=target.username,
+        ip=security.client_ip(request),
+    )
+    db.commit()
+    return {
+        "path": f"/reset-password?token={raw}",
+        "expires_in": token_service.lifetime_seconds(token_service.KIND_RESET_PASSWORD),
+    }
 
 
 @router.post("/users/{user_id}/unlock")

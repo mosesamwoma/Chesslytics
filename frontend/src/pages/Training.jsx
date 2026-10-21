@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ChessBoard from '../components/ChessBoard.jsx'
+import ErrorNotice from '../components/ErrorNotice.jsx'
 import SeverityBadge from '../components/SeverityBadge.jsx'
 import StatTile from '../components/StatTile.jsx'
 import { categoryLabel, phaseLabel } from '../labels.js'
@@ -23,6 +24,30 @@ const CATEGORIES = [
 ]
 
 const SEVERITIES = ['blunder', 'mistake', 'inaccuracy']
+
+const PRACTICE_MODES = [
+  { value: 'queue', label: 'Smart review: due first, then new' },
+  { value: 'due', label: 'Due for review' },
+  { value: 'new', label: 'New puzzles' },
+  { value: 'all', label: 'Every puzzle' },
+]
+
+const REVIEW_BADGE = {
+  new: 'new',
+  due: 'due now',
+  learning: 'learning',
+  mastered: 'mastered',
+}
+
+function reviewIn(review) {
+  if (!review || !review.due_at) return null
+  const minutes = Math.round((new Date(review.due_at).getTime() - Date.now()) / 60000)
+  if (minutes <= 1) return 'now'
+  if (minutes < 60) return `in ${minutes} minutes`
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return `in ${hours} ${hours === 1 ? 'hour' : 'hours'}`
+  return `in ${Math.round(hours / 24)} days`
+}
 
 const PROMOTION_NAMES = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' }
 
@@ -61,7 +86,7 @@ export function destinations(legalMoves, square) {
 }
 
 export default function Training() {
-  const [filters, setFilters] = useState({ category: '', severity: '', unseenOnly: false })
+  const [filters, setFilters] = useState({ category: '', severity: '', practice: 'queue' })
   const [data, setData] = useState(null)
   const [stats, setStats] = useState(null)
   const [error, setError] = useState(null)
@@ -152,6 +177,7 @@ export default function Training() {
                         ...row,
                         attempts: result.attempts?.attempts ?? row.attempts + 1,
                         solved: row.solved || result.correct,
+                        review: result.review || row.review,
                       }
                     : row,
                 ),
@@ -204,9 +230,11 @@ export default function Training() {
 
   if (error && !data) {
     return (
-      <div className="notice error">
-        {error.message} <button type="button" className="button" onClick={load}>Retry</button>
-      </div>
+      <ErrorNotice error={error}>
+        <button type="button" className="button" onClick={load}>
+          Retry
+        </button>
+      </ErrorNotice>
     )
   }
 
@@ -225,14 +253,15 @@ export default function Training() {
         </Link>
       </div>
 
-      {error ? (
-        <div className="notice error" style={{ marginBottom: 16 }}>
-          {error.message}
-        </div>
-      ) : null}
+      <ErrorNotice error={error} style={{ marginBottom: 16 }} />
 
       {stats ? (
         <div className="grid grid-kpi" style={{ marginBottom: 16 }}>
+          <StatTile
+            label="Due for review"
+            value={stats.due_now}
+            delta={`${stats.new_puzzles} new, ${stats.mastered} mastered`}
+          />
           <StatTile label="Puzzles available" value={stats.puzzles_available} />
           <StatTile label="Attempts" value={stats.attempts} />
           <StatTile label="Solved" value={stats.correct} />
@@ -276,16 +305,17 @@ export default function Training() {
           </select>
         </div>
         <div className="field">
-          <label htmlFor="unseen">Repetition</label>
+          <label htmlFor="practice">Practice</label>
           <select
-            id="unseen"
-            value={filters.unseenOnly ? 'unseen' : 'all'}
-            onChange={(event) =>
-              setFilters({ ...filters, unseenOnly: event.target.value === 'unseen' })
-            }
+            id="practice"
+            value={filters.practice}
+            onChange={(event) => setFilters({ ...filters, practice: event.target.value })}
           >
-            <option value="all">every puzzle</option>
-            <option value="unseen">only ones I have not tried</option>
+            {PRACTICE_MODES.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
           </select>
         </div>
         <span className="muted">
@@ -295,8 +325,11 @@ export default function Training() {
 
       {!loading && !puzzles.length ? (
         <div className="notice">
-          No puzzles match these filters. Mistakes are mined from your games — import a PGN and
-          run an analysis on the <Link to="/games">Games</Link> page first.
+          {filters.practice === 'due'
+            ? 'Nothing is due for review right now. Come back later, or switch Practice to new puzzles.'
+            : 'No puzzles match these filters. Mistakes are mined from your games — import a PGN and run an analysis on the '}
+          {filters.practice === 'due' ? null : <Link to="/games">Games</Link>}
+          {filters.practice === 'due' ? null : ' page first.'}
         </div>
       ) : null}
 
@@ -364,6 +397,9 @@ export default function Training() {
                 <div className="row">
                   <SeverityBadge severity={puzzle.severity} />
                   <span className="badge">{categoryLabel(puzzle.category)}</span>
+                  {puzzle.review ? (
+                    <span className="badge">{REVIEW_BADGE[puzzle.review.status] || puzzle.review.status}</span>
+                  ) : null}
                 </div>
               </div>
               <div className="row secondary" style={{ fontSize: 13, marginTop: 8 }}>
@@ -411,6 +447,13 @@ export default function Training() {
                   ) : null}
                   <span className="badge">graded by {feedback.graded_by}</span>
                 </div>
+                {feedback.review ? (
+                  <p className="secondary" style={{ fontSize: 13, marginBottom: 0 }}>
+                    {feedback.correct
+                      ? `Box ${feedback.review.box} of 5. Review again ${reviewIn(feedback.review)}.`
+                      : `Back to box 0. Review again ${reviewIn(feedback.review)}.`}
+                  </p>
+                ) : null}
                 {feedback.category_basis ? (
                   <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
                     {feedback.category_basis}

@@ -1,21 +1,22 @@
 import { Link } from 'react-router-dom'
 import CategoryBars from '../components/CategoryBars.jsx'
+import ErrorNotice from '../components/ErrorNotice.jsx'
 import GameCard from '../components/GameCard.jsx'
+import ProgressChart from '../components/ProgressChart.jsx'
 import StatTile from '../components/StatTile.jsx'
+import { useAsync } from '../hooks/useAsync.js'
 import { useGames } from '../hooks/useGames.js'
 import { useOverview } from '../hooks/useProfile.js'
 import { SEVERITY_ORDER, categoryLabel, phaseLabel, titleCase } from '../labels.js'
+import { getProgress } from '../services/patternsService.js'
 
 export default function Dashboard() {
   const overview = useOverview()
   const games = useGames({ limit: 5 })
+  const progress = useAsync(() => getProgress(26), [])
 
   if (overview.error) {
-    return (
-      <div className="notice error">
-        Could not reach the API: {overview.error.message}
-      </div>
-    )
+    return <ErrorNotice error={overview.error} />
   }
 
   const data = overview.data
@@ -70,6 +71,17 @@ export default function Dashboard() {
               value={data.time_pressure_mistakes}
               delta={`${pressured}% of all mistakes`}
             />
+          </div>
+
+          <div className="card" style={{ marginTop: 16 }}>
+            <h2>Your progress</h2>
+            {progress.error ? (
+              <ErrorNotice error={progress.error} />
+            ) : progress.data ? (
+              <ProgressChart progress={progress.data} />
+            ) : (
+              <p className="muted">Loading&hellip;</p>
+            )}
           </div>
 
           <div className="grid grid-two" style={{ marginTop: 16 }}>

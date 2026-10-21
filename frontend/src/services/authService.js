@@ -35,6 +35,33 @@ export function logout() {
   })
 }
 
+export function forgotPassword(identifier) {
+  return request('/api/auth/forgot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier }),
+    quiet: true,
+  })
+}
+
+export function resetPassword(token, newPassword) {
+  return request('/api/auth/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, new_password: newPassword }),
+    quiet: true,
+  })
+}
+
+export function verifyEmail(token) {
+  return request('/api/auth/verify-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+    quiet: true,
+  })
+}
+
 export function changePassword(currentPassword, newPassword) {
   return post('/api/auth/password', {
     current_password: currentPassword,

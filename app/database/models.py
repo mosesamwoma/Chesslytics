@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    TypeDecorator,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -22,6 +23,24 @@ from app.database.database import Base
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator):
+    impl = DateTime
+    cache_ok = True
+
+    def __init__(self) -> None:
+        super().__init__(timezone=True)
+
+    def process_bind_param(self, value, dialect):
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone(timezone.utc)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
 
 class User(Base):
@@ -45,16 +64,16 @@ class User(Base):
     token_version: Mapped[int] = mapped_column(Integer, default=0)
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
     email: Mapped[Optional[str]] = mapped_column(String(254), nullable=True)
     email_key: Mapped[Optional[str]] = mapped_column(String(254), nullable=True, index=True)
     email_verified_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
 
 
@@ -68,11 +87,11 @@ class AccountToken(Base):
     kind: Mapped[str] = mapped_column(String(24), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     email: Mapped[Optional[str]] = mapped_column(String(254), nullable=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
     used_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
 class AuditLog(Base):
@@ -80,7 +99,7 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, index=True
+        UTCDateTime(), default=utcnow, index=True
     )
     actor_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     actor_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -106,13 +125,13 @@ class AnalysisJob(Base):
     error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, index=True
+        UTCDateTime(), default=utcnow, index=True
     )
     started_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
     finished_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
 
 
@@ -141,8 +160,8 @@ class Game(Base):
     black_elo: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     pgn: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    analyzed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    analyzed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
     analyzed_depth: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     moves: Mapped[list["Move"]] = relationship(
@@ -239,7 +258,7 @@ class Mistake(Base):
     verified_loss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     agreed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     facts: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     game: Mapped["Game"] = relationship(back_populates="mistakes")
     attempts: Mapped[list["PuzzleAttempt"]] = relationship(
@@ -265,7 +284,7 @@ class PuzzleAttempt(Base):
     loss_vs_best: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     graded_by: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     engine: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     mistake: Mapped["Mistake"] = relationship(back_populates="attempts")
 
@@ -287,7 +306,7 @@ class PlayerProfile(Base):
     depth: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     engine: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     patterns: Mapped[list["Pattern"]] = relationship(
         back_populates="profile", cascade="all, delete-orphan"
@@ -307,7 +326,7 @@ class Pattern(Base):
     games: Mapped[int] = mapped_column(Integer, default=0)
     recurring: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     profile: Mapped[Optional["PlayerProfile"]] = relationship(back_populates="patterns")
 
@@ -328,6 +347,6 @@ class CoachInsight(Base):
     focus_drill: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     sections: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     raw_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     profile: Mapped[Optional["PlayerProfile"]] = relationship()

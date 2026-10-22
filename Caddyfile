@@ -2,7 +2,7 @@
 	encode zstd gzip
 
 	request_body {
-		max_size 12MB
+		max_size 40MB
 	}
 
 	reverse_proxy backend:8000

@@ -50,6 +50,12 @@ async def upload_games(
         )
     text = await read_upload(file)
     result = import_text(db, user, file.filename or "upload.pgn", text)
+    if not result["fingerprints"]:
+        db.rollback()
+        detail = "no usable games found in that file"
+        if result["errors"]:
+            detail = f"{detail}: {result['errors'][0]}"
+        raise HTTPException(status_code=400, detail=detail)
     db.commit()
     stored = game_service.games_by_fingerprint(db, user.id, result["fingerprints"])
     return {

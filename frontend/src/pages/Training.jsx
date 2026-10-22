@@ -148,6 +148,10 @@ export default function Training() {
 
   useEffect(() => {
     const onKey = (event) => {
+      const target = event.target
+      const tag = target && target.tagName ? target.tagName.toLowerCase() : ''
+      if (tag === 'select' || tag === 'input' || tag === 'textarea') return
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
       if (event.key === 'ArrowRight') advance(1)
       if (event.key === 'ArrowLeft') advance(-1)
     }

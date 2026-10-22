@@ -51,7 +51,16 @@ def set_role(args: argparse.Namespace) -> int:
         if user is None:
             print(f"error: no account named {args.username!r}", file=sys.stderr)
             return 2
-        user.role = user_service.ROLE_ADMIN if args.admin else user_service.ROLE_USER
+        new_role = user_service.ROLE_ADMIN if args.admin else user_service.ROLE_USER
+        if (
+            new_role != user_service.ROLE_ADMIN
+            and user.role == user_service.ROLE_ADMIN
+            and user.is_active
+            and user_service.count_active_admins(session) <= 1
+        ):
+            print("error: at least one administrator is required", file=sys.stderr)
+            return 2
+        user.role = new_role
         user.is_active = True
         user_service.revoke_sessions(session, user)
         user_service.audit(session, "cli.set_role", target=user.username, detail=user.role)

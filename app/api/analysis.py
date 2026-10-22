@@ -12,7 +12,13 @@ from app.api.common import read_upload
 from app.api.games import UPLOADS_PER_HOUR, import_text
 from app.database.database import get_db
 from app.database.models import Game, Mistake, User
-from app.services import analysis_service, export_service, game_service, job_service
+from app.services import (
+    analysis_service,
+    export_service,
+    game_service,
+    job_service,
+    progress_service,
+)
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
@@ -110,7 +116,7 @@ def run_analysis(
         raise HTTPException(status_code=400, detail="no stored games to analyze")
     params = build_params(
         ids,
-        request.player,
+        request.player or progress_service.tracked_player(db, user.id),
         request.color,
         request.depth,
         request.time_limit,

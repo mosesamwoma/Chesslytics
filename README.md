@@ -227,13 +227,13 @@ that were analysed in that run.
 ## Command line
 
 ```bash
-python -m app.main --pgn games.pgn --player Alice --limit-time 0.1
-python -m app.main --pgn games.pgn --save --user alice
+python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --player Jude254 --limit-time 0.1
+python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --save --user jude254
 ```
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--pgn` | `data/games.pgn` | PGN file to analyse |
+| `--pgn` | `data/Jude254_vs_manmusaa_2026.09.30.pgn` | PGN file to analyse |
 | `--depth` / `--limit-time` | `STOCKFISH_DEPTH` (else `12`) / none | Search depth, or seconds per move |
 | `--min-loss` | `1.0` | Minimum pawn loss to report |
 | `--player` / `--color` | none / `both` | Restrict to one player or colour |

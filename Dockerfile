@@ -29,7 +29,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY data/sample_games.pgn ./data/sample_games.pgn
+COPY data/Jude254_vs_manmusaa_2026.09.30.pgn ./data/Jude254_vs_manmusaa_2026.09.30.pgn
 COPY --from=frontend /build/dist ./frontend/dist
 
 RUN mkdir -p data/analysis && chown -R chesslytics:chesslytics /srv/data

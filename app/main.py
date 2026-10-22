@@ -42,7 +42,7 @@ observability.configure_logging()
 observability.init_sentry()
 logger = logging.getLogger("chesslytics")
 
-DEFAULT_PGN = os.path.join("data", "games.pgn")
+DEFAULT_PGN = os.path.join("data", "Jude254_vs_manmusaa_2026.09.30.pgn")
 JSON_BODY_LIMIT = 1024 * 1024
 UPLOAD_OVERHEAD = 1024 * 1024
 CONTENT_SECURITY_POLICY = (
@@ -273,7 +273,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  python -m app.main --pgn data/games.pgn\n"
+            "  python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn\n"
             "  python -m app.main --player YourChessComName\n"
             "  python -m app.main --depth 16 --min-loss 0.5\n"
             "  python -m app.main --limit-time 0.05 --output report.json\n"

@@ -19,7 +19,7 @@ data/*.sqlite
 
 data/games.pgn
 data/*.pgn
-!data/sample_games.pgn
+!data/Jude254_vs_manmusaa_2026.09.30.pgn
 
 stockfish/*
 !stockfish/.gitkeep

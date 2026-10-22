@@ -180,10 +180,10 @@ on the server:
 
 ```bash
 python -m app.manage list-users
-python -m app.manage create-user alice
-python -m app.manage create-user ops --admin
-python -m app.manage reset-password alice
-python -m app.manage set-role alice --admin
+python -m app.manage create-user Jude254
+python -m app.manage create-user manmusaa --admin
+python -m app.manage reset-password Jude254
+python -m app.manage set-role Jude254 --admin
 ```
 
 On platforms without a shell, set `ADMIN_PASSWORD` to a new value together with
@@ -228,7 +228,7 @@ that were analysed in that run.
 
 ```bash
 python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --player Jude254 --limit-time 0.1
-python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --save --user jude254
+python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --save --user Jude254
 ```
 
 | Option | Default | Meaning |

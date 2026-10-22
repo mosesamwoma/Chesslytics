@@ -30,7 +30,6 @@ export default function ResetPassword() {
     try {
       await resetPassword(token, password)
       setDone(true)
-      if (status === 'authenticated') endSession()
     } catch (err) {
       setError(err)
     } finally {
@@ -43,7 +42,13 @@ export default function ResetPassword() {
       <div className="card login">
         <h1>Password updated</h1>
         <p className="subtitle">You can now sign in with your new password.</p>
-        <Link className="button primary" to="/">
+        <Link
+          className="button primary"
+          to="/"
+          onClick={() => {
+            if (status === 'authenticated') endSession()
+          }}
+        >
           Go to sign in
         </Link>
       </div>

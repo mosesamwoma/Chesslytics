@@ -9,6 +9,7 @@ import {
   removeEmail,
   restoreBackup,
   resendVerification,
+  setDigest,
   setEmail,
 } from '../services/accountService.ts'
 import { exportUrl } from '../services/analysisService.ts'
@@ -228,6 +229,25 @@ export default function Account() {
     }
   }
 
+  const toggleDigest = async (enabled: boolean) => {
+    setBusy(true)
+    setEmailError(null)
+    setEmailMessage(null)
+    try {
+      const result = await setDigest(enabled)
+      setUser(result.user)
+      setEmailMessage(
+        enabled
+          ? 'The weekly digest is on. Your first one arrives within a day.'
+          : 'The weekly digest is off.',
+      )
+    } catch (err) {
+      setEmailError(toProblem(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const resend = async () => {
     setBusy(true)
     setEmailError(null)
@@ -373,6 +393,18 @@ export default function Account() {
                 </button>
               ) : null}
             </div>
+            <label className="row" style={{ marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={Boolean(user?.digest_enabled)}
+                disabled={busy || !user?.email_verified}
+                onChange={(event) => toggleDigest(event.target.checked)}
+              />
+              <span>
+                Email me a weekly digest of my progress and puzzles due
+                {user?.email_verified ? '' : ' (confirm your address first)'}
+              </span>
+            </label>
           </>
         ) : (
           <p className="subtitle">

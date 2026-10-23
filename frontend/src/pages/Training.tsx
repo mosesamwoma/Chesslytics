@@ -1,20 +1,44 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import ChessBoard from '../components/ChessBoard.tsx'
+import ChessBoard, { sourceFromUci, squareFromUci } from '../components/ChessBoard.tsx'
+import type { BoardArrow } from '../components/ChessBoard.tsx'
+import PracticeGoal from '../components/PracticeGoal.tsx'
 import ErrorNotice from '../components/ErrorNotice.tsx'
 import SeverityBadge from '../components/SeverityBadge.tsx'
 import StatTile from '../components/StatTile.tsx'
 import { categoryLabel, phaseLabel } from '../labels.ts'
+import { useCopy } from '../hooks/useCopy.ts'
 import { toProblem } from '../services/api.ts'
 import type { Problem } from '../services/api.ts'
 import {
+  continueLine,
+  exportUrl,
   getSolution,
   getStats,
   listPuzzles,
   submitAttempt,
 } from '../services/trainingService.ts'
 import type { PuzzleFilters } from '../services/trainingService.ts'
-import type { AttemptResult, Review, Solution, TrainingStats, PuzzlePage } from '../types.ts'
+import type {
+  Activity,
+  AttemptResult,
+  LineStep,
+  PuzzlePage,
+  Review,
+  Solution,
+  TrainingStats,
+} from '../types.ts'
+
+interface FollowState {
+  fen: string
+  legalMoves: string[]
+  step: number
+  total: number
+  done: boolean
+  lastMove: string | null
+  message: string
+  failed: boolean
+}
 
 interface PromotionChoice {
   from: string
@@ -60,6 +84,19 @@ function reviewIn(review: Review | null | undefined): string | null {
 }
 
 const PROMOTION_NAMES: Record<string, string> = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' }
+
+function startFollow(line: LineStep): FollowState {
+  return {
+    fen: line.fen,
+    legalMoves: line.legal_moves,
+    step: line.step,
+    total: line.total,
+    done: false,
+    failed: false,
+    lastMove: line.opponent_uci,
+    message: `Correct. The opponent played ${line.opponent_san}. Find the next move.`,
+  }
+}
 
 export function sideToMove(fen: string | null | undefined): 'white' | 'black' {
   return (fen || '').split(' ')[1] === 'b' ? 'black' : 'white'
@@ -113,7 +150,10 @@ export default function Training() {
   const [promotion, setPromotion] = useState<PromotionChoice | null>(null)
   const [feedback, setFeedback] = useState<AttemptResult | null>(null)
   const [revealed, setRevealed] = useState<Solution | null>(null)
+  const [follow, setFollow] = useState<FollowState | null>(null)
+  const [hintSquare, setHintSquare] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const fenCopy = useCopy()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -130,6 +170,8 @@ export default function Training() {
       setPromotion(null)
       setFeedback(null)
       setRevealed(null)
+      setFollow(null)
+      setHintSquare(null)
     } catch (err) {
       setError(toProblem(err))
     } finally {
@@ -146,8 +188,27 @@ export default function Training() {
   const legalMoves = puzzle?.legal_moves || []
   const mover = puzzle ? puzzle.orientation || sideToMove(puzzle.fen) : 'white'
 
-  const shownFen = feedback?.fen_after || revealed?.fen || puzzle?.fen || ''
-  const reachable = selected ? destinations(legalMoves, selected) : []
+  const following = follow !== null && !follow.done
+  const activeMoves = following && follow ? follow.legalMoves : legalMoves
+  const shownFen = follow?.fen || feedback?.fen_after || revealed?.fen || puzzle?.fen || ''
+  const reachable = selected ? destinations(activeMoves, selected) : []
+
+  const arrows: BoardArrow[] = (() => {
+    const list: BoardArrow[] = []
+    const add = (uci: string | null | undefined, kind: BoardArrow['kind']) => {
+      const from = sourceFromUci(uci)
+      const to = squareFromUci(uci)
+      if (from && to) list.push({ from, to, kind })
+    }
+    if (follow) return list
+    if (feedback) {
+      add(feedback.best_move_uci, 'best')
+      if (feedback.played_uci !== feedback.best_move_uci) add(feedback.played_uci, 'played')
+    } else if (revealed) {
+      add(revealed.best_move_uci, 'best')
+    }
+    return list
+  })()
 
   const advance = useCallback(
     (step: number) => {
@@ -159,6 +220,8 @@ export default function Training() {
       setPromotion(null)
       setFeedback(null)
       setRevealed(null)
+      setFollow(null)
+      setHintSquare(null)
     },
     [puzzles.length],
   )
@@ -187,6 +250,8 @@ export default function Training() {
         setSelected(null)
         setPromotion(null)
         setRevealed(null)
+        setHintSquare(null)
+        setFollow(result.correct && result.line ? startFollow(result.line) : null)
         setStats(await getStats())
         setData((current) =>
           current
@@ -214,19 +279,73 @@ export default function Training() {
     [puzzle],
   )
 
+  const playLine = useCallback(
+    async (uci: string) => {
+      if (!puzzle || !follow || follow.done) return
+      setBusy(true)
+      setError(null)
+      try {
+        const result = await continueLine(puzzle.id, follow.step, uci)
+        setSelected(null)
+        setPromotion(null)
+        if (!result.correct) {
+          setFollow({
+            ...follow,
+            failed: true,
+            message: `Not the line. The engine continued with ${result.expected_san}. Try again.`,
+          })
+        } else if (result.done) {
+          setFollow({
+            ...follow,
+            fen: result.fen,
+            legalMoves: [],
+            done: true,
+            failed: false,
+            lastMove: uci,
+            message: 'Line complete. You found every move.',
+          })
+        } else {
+          setFollow({
+            fen: result.fen,
+            legalMoves: result.legal_moves || [],
+            step: result.step,
+            total: result.total,
+            done: false,
+            failed: false,
+            lastMove: result.opponent_uci || null,
+            message: `Correct. The opponent played ${result.opponent_san}. Find the next move.`,
+          })
+        }
+      } catch (err) {
+        setError(toProblem(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [follow, puzzle],
+  )
+
+  const commit = useCallback(
+    (uci: string) => {
+      if (following) playLine(uci)
+      else attempt(uci)
+    },
+    [attempt, following, playLine],
+  )
+
   const onSquareClick = useCallback(
     (square: string) => {
-      if (!puzzle || feedback || busy) return
+      if (!puzzle || busy || (feedback && !following)) return
       const piece = pieceAt(shownFen, square)
       if (selected && reachable.includes(square)) {
-        const candidates = movesFrom(legalMoves, selected).filter(
+        const candidates = movesFrom(activeMoves, selected).filter(
           (uci) => uci.slice(2, 4) === square,
         )
         if (candidates.length > 1) {
           setPromotion({ from: selected, to: square, candidates })
           return
         }
-        if (candidates.length === 1) attempt(candidates[0])
+        if (candidates.length === 1) commit(candidates[0])
         return
       }
       if (piece && ((mover === 'white') === piece.isWhite)) {
@@ -235,13 +354,24 @@ export default function Training() {
       }
       setSelected(null)
     },
-    [attempt, busy, feedback, legalMoves, mover, puzzle, reachable, selected, shownFen],
+    [activeMoves, busy, commit, feedback, following, mover, puzzle, reachable, selected, shownFen],
   )
 
   const reveal = useCallback(async () => {
     if (!puzzle) return
     try {
       setRevealed(await getSolution(puzzle.id))
+      setHintSquare(null)
+    } catch (err) {
+      setError(toProblem(err))
+    }
+  }, [puzzle])
+
+  const giveHint = useCallback(async () => {
+    if (!puzzle) return
+    try {
+      const solution = await getSolution(puzzle.id)
+      setHintSquare(sourceFromUci(solution.best_move_uci))
     } catch (err) {
       setError(toProblem(err))
     }
@@ -275,6 +405,15 @@ export default function Training() {
       </div>
 
       <ErrorNotice error={error} style={{ marginBottom: 16 }} />
+
+      {stats ? (
+        <PracticeGoal
+          activity={stats.activity}
+          onChange={(activity: Activity) =>
+            setStats((value) => (value ? { ...value, activity } : value))
+          }
+        />
+      ) : null}
 
       {stats ? (
         <div className="grid grid-kpi" style={{ marginBottom: 16 }}>
@@ -342,6 +481,12 @@ export default function Training() {
         <span className="muted">
           {data && puzzles.length ? `${index + 1} of ${data.total}` : '0'} shown
         </span>
+        <a
+          className="button"
+          href={exportUrl({ category: filters.category, severity: filters.severity })}
+        >
+          Export puzzles (CSV)
+        </a>
       </div>
 
       {!loading && !puzzles.length ? (
@@ -363,7 +508,9 @@ export default function Training() {
                 orientation={mover}
                 selected={selected}
                 targets={reachable}
-                lastMove={feedback?.played_uci || null}
+                highlight={[hintSquare]}
+                lastMove={follow ? follow.lastMove : feedback?.played_uci || null}
+                arrows={arrows}
                 onSquareClick={onSquareClick}
               />
               <div className="board-controls">
@@ -380,10 +527,20 @@ export default function Training() {
                 </span>
               </div>
               <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
-                {feedback
-                  ? 'Attempt recorded. Press → for the next puzzle.'
-                  : 'Click the piece you want to move, then the square you want to move it to.'}
+                {follow
+                  ? follow.message
+                  : feedback
+                    ? 'Attempt recorded. Press → for the next puzzle.'
+                    : hintSquare
+                      ? `Hint: move the piece on ${hintSquare}.`
+                      : 'Click the piece you want to move, then the square you want to move it to.'}
               </p>
+              {follow ? (
+                <p className="secondary" style={{ fontSize: 13, marginBottom: 0 }}>
+                  Follow-up move {Math.min(follow.done ? follow.total : follow.step / 2 + 1, follow.total)} of{' '}
+                  {follow.total}
+                </p>
+              ) : null}
               {promotion ? (
                 <div className="row" style={{ marginTop: 8 }}>
                   <span className="secondary">Promote to</span>
@@ -392,7 +549,7 @@ export default function Training() {
                       key={uci}
                       type="button"
                       className="button primary"
-                      onClick={() => attempt(uci)}
+                      onClick={() => commit(uci)}
                       disabled={busy}
                     >
                       {PROMOTION_NAMES[uci.slice(4, 5)] || uci.slice(4, 5)}
@@ -437,8 +594,23 @@ export default function Training() {
                 {puzzle.in_book ? <span className="badge">theory</span> : null}
               </div>
               <div className="row" style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={giveHint}
+                  disabled={Boolean(feedback) || Boolean(revealed) || Boolean(hintSquare)}
+                >
+                  Hint
+                </button>
                 <button type="button" className="button" onClick={reveal} disabled={!puzzle}>
                   Show solution
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => fenCopy.copy(puzzle.fen)}
+                >
+                  {fenCopy.copied ? 'FEN copied' : fenCopy.failed ? 'Copy failed' : 'Copy FEN'}
                 </button>
                 <Link className="button" to={`/games/${puzzle.game_id}`}>
                   Open the game
@@ -502,6 +674,11 @@ export default function Training() {
                   </span>
                   {revealed.book_move ? <span>Book move: {revealed.book_move}</span> : null}
                 </div>
+                {revealed.best_line_san && revealed.best_line_san.length > 1 ? (
+                  <p className="secondary" style={{ fontSize: 13, marginBottom: 0 }}>
+                    Best line: <span className="best mono">{revealed.best_line_san.join(' ')}</span>
+                  </p>
+                ) : null}
                 {revealed.category_basis ? (
                   <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
                     {revealed.category_basis}

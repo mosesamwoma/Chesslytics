@@ -5,7 +5,7 @@ import getpass
 import sys
 
 from app.database.database import init_db, session_scope
-from app.services import user_service
+from app.services import digest_service, user_service
 
 
 def read_password(provided: str | None) -> str:
@@ -81,6 +81,12 @@ def list_users(_args: argparse.Namespace) -> int:
     return 0
 
 
+def send_digests(_args: argparse.Namespace) -> int:
+    sent = digest_service.send_due()
+    print(f"sent {sent} weekly digest(s)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.manage")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -103,6 +109,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = sub.add_parser("list-users", help="list accounts")
     listing.set_defaults(func=list_users)
+
+    digests = sub.add_parser("send-digests", help="send the weekly digest to everyone who is due")
+    digests.set_defaults(func=send_digests)
     return parser
 
 

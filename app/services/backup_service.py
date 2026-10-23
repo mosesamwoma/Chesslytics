@@ -81,6 +81,8 @@ def export_backup(session: Session, user_id: int) -> dict:
             {
                 "pgn": game.pgn,
                 "source": game.source,
+                "notes": game.notes,
+                "tags": game.tags if isinstance(game.tags, list) else None,
                 "mistakes": mistakes_by_game.get(game.id, []),
             }
         )
@@ -255,6 +257,12 @@ def restore_backup(session: Session, user_id: int, data: Any) -> dict:
         source = entry.get("source")
         if isinstance(source, str):
             row.source = game_service.fit(source, 255)
+        try:
+            row.notes = game_service.clean_notes(entry.get("notes"))
+            row.tags = game_service.clean_tags(entry.get("tags"))
+        except ValueError:
+            row.notes = None
+            row.tags = None
         raw_mistakes = entry.get("mistakes")
         if not isinstance(raw_mistakes, list):
             continue

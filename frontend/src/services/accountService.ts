@@ -13,6 +13,10 @@ export function removeEmail(password: string): Promise<UserEnvelope> {
   return del<UserEnvelope>('/api/account/email', { password })
 }
 
+export function setDigest(enabled: boolean): Promise<UserEnvelope> {
+  return put<UserEnvelope>('/api/account/digest', { enabled })
+}
+
 export function backupUrl(): string {
   return `${BASE}/api/account/backup`
 }

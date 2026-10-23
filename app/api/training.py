@@ -4,6 +4,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import auth, security, settings
@@ -15,12 +16,22 @@ from app.services import analysis_service, training_service
 router = APIRouter(prefix="/api/training", tags=["training"])
 
 ATTEMPTS_PER_MINUTE = 40
+LINE_MOVES_PER_MINUTE = 120
 
 
 class AttemptRequest(BaseModel):
     uci: str = Field(min_length=4, max_length=5, pattern=r"^[a-hA-H][1-8][a-hA-H][1-8][qrbnQRBN]?$")
     depth: Optional[int] = Field(default=None, ge=1, le=40)
     time_limit: Optional[float] = Field(default=None, gt=0, le=60)
+
+
+class ContinueRequest(BaseModel):
+    step: int = Field(ge=2, le=12)
+    uci: str = Field(min_length=4, max_length=5, pattern=r"^[a-hA-H][1-8][a-hA-H][1-8][qrbnQRBN]?$")
+
+
+class GoalRequest(BaseModel):
+    goal: int = Field(ge=1, le=100)
 
 
 def _limit(depth: Optional[int], time_limit: Optional[float]) -> SearchLimit:
@@ -127,6 +138,27 @@ def attempt_puzzle(
     return result
 
 
+@router.post("/puzzles/{puzzle_id}/continue")
+def continue_puzzle(
+    puzzle_id: int,
+    request: ContinueRequest,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    wait = security.limiter.consume(f"line:{user.id}", LINE_MOVES_PER_MINUTE, 60)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"slow down; try again in {wait} seconds",
+            headers={"Retry-After": str(wait)},
+        )
+    mistake = _mistake_or_404(db, user, puzzle_id)
+    try:
+        return training_service.continue_line(mistake, request.step, request.uci)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/puzzles/{puzzle_id}/solution")
 def reveal_solution(
     puzzle_id: int, user: User = Depends(auth.current_user), db: Session = Depends(get_db)
@@ -143,6 +175,38 @@ def list_attempts(
 ) -> dict:
     rows = training_service.recent_attempts(db, user.id, limit=limit)
     return {"attempts": [training_service.attempt_to_dict(row) for row in rows]}
+
+
+@router.get("/export")
+def export_puzzles(
+    category: Optional[str] = Query(default=None, max_length=32),
+    severity: Optional[str] = Query(default=None, max_length=16),
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    content, count = training_service.puzzles_csv(db, user.id, category, severity)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="chesslytics-puzzles.csv"',
+            "X-Puzzle-Count": str(count),
+        },
+    )
+
+
+@router.put("/goal")
+def set_goal(
+    request: GoalRequest,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        result = training_service.set_goal(db, user.id, request.goal)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return result
 
 
 @router.get("/stats")

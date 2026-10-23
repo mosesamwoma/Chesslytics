@@ -20,6 +20,7 @@ from app.services import analysis_service
 logger = logging.getLogger("chesslytics")
 
 ACTIVE_STATUSES = ("queued", "running")
+FINISHED_STATUSES = ("done", "failed", "cancelled")
 PROGRESS_PATTERN = re.compile(r"^\[(\d+)/(\d+)\]\s*(\w*)")
 JOBS_PER_HOUR = 30
 

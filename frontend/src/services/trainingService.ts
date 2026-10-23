@@ -1,5 +1,13 @@
-import type { AttemptResult, Puzzle, PuzzlePage, Solution, TrainingStats } from '../types.ts'
-import { get, post } from './api.ts'
+import { BASE, get, post, put } from './api.ts'
+import type {
+  Activity,
+  AttemptResult,
+  LineResult,
+  Puzzle,
+  PuzzlePage,
+  Solution,
+  TrainingStats,
+} from '../types.ts'
 
 type QueryValue = string | number | boolean | undefined | null
 
@@ -66,6 +74,18 @@ export function submitAttempt(
     depth,
     time_limit: timeLimit,
   })
+}
+
+export function continueLine(id: number, step: number, uci: string): Promise<LineResult> {
+  return post<LineResult>(`/api/training/puzzles/${id}/continue`, { step, uci })
+}
+
+export function setGoal(goal: number): Promise<Activity> {
+  return put<Activity>('/api/training/goal', { goal })
+}
+
+export function exportUrl(filters: { category?: string; severity?: string } = {}): string {
+  return `${BASE}/api/training/export${query(filters)}`
 }
 
 export function getStats(): Promise<TrainingStats> {

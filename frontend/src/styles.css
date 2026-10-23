@@ -397,6 +397,7 @@ input[type='text'],
 input[type='number'],
 input[type='password'],
 input[type='search'],
+textarea,
 select {
   font: inherit;
   font-size: 14px;
@@ -595,6 +596,73 @@ select {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.board-frame {
+  position: relative;
+  width: 100%;
+}
+
+.board-arrows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.board-arrows line {
+  stroke-width: 0.17;
+  stroke-linecap: round;
+}
+
+.arrow-best line {
+  stroke: var(--status-good);
+}
+
+.arrow-best polygon {
+  fill: var(--status-good);
+}
+
+.arrow-played line {
+  stroke: var(--status-critical);
+}
+
+.arrow-played polygon {
+  fill: var(--status-critical);
+}
+
+.arrow {
+  opacity: 0.82;
+}
+
+.coord-rank,
+.coord-file {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.coord-rank {
+  top: 3px;
+  left: 3px;
+}
+
+.coord-file {
+  right: 3px;
+  bottom: 2px;
+}
+
+.square.light .coord-rank,
+.square.light .coord-file {
+  color: var(--board-dark);
+}
+
+.square.dark .coord-rank,
+.square.dark .coord-file {
+  color: var(--board-light);
 }
 
 .board {
@@ -850,4 +918,32 @@ progress {
 .job-result {
   max-width: 280px;
   overflow-wrap: anywhere;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.link-button:hover,
+.link-button:focus-visible {
+  opacity: 1;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
 }

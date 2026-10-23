@@ -106,6 +106,120 @@ def _aggregate(buckets: list[dict]) -> dict:
     }
 
 
+TIME_CONTROL_ORDER = ["ultrabullet", "bullet", "blitz", "rapid", "classical", "daily", "unknown"]
+
+
+def classify_time_control(raw: Optional[str]) -> str:
+    text = (raw or "").strip()
+    if not text or text in {"-", "?"}:
+        return "unknown"
+    if "/" in text:
+        return "daily"
+    base, _, bonus = text.partition("+")
+    try:
+        seconds = int(base)
+        increment = int(bonus) if bonus else 0
+    except ValueError:
+        return "unknown"
+    if seconds < 0 or increment < 0:
+        return "unknown"
+    estimate = seconds + 40 * increment
+    if estimate < 30:
+        return "ultrabullet"
+    if estimate < 180:
+        return "bullet"
+    if estimate < 480:
+        return "blitz"
+    if estimate < 1500:
+        return "rapid"
+    return "classical"
+
+
+def time_controls(session: Session, user_id: int) -> dict:
+    player = tracked_player(session, user_id)
+    moves, mistakes, games, mistake_rows = _game_stats(session, user_id)
+    controls = {
+        game_id: control
+        for game_id, control in session.execute(
+            select(Game.id, Game.time_control).where(
+                Game.user_id == user_id, Game.analyzed_at.is_not(None)
+            )
+        ).all()
+    }
+    categories: dict[tuple[int, str], list[str]] = {}
+    for game_id, color, _number, category in mistake_rows:
+        categories.setdefault((game_id, color), []).append(category)
+
+    groups: dict[str, dict] = {}
+    for game_id, white, black, result, _date, _created, _opening, _eco in games:
+        colors = _colors_for(white, black, player)
+        if player and not colors:
+            continue
+        key = classify_time_control(controls.get(game_id))
+        group = groups.setdefault(
+            key,
+            {
+                "games": 0,
+                "moves": 0,
+                "loss_cp": 0,
+                "mistakes": 0,
+                "wins": 0,
+                "draws": 0,
+                "losses": 0,
+                "categories": Counter(),
+            },
+        )
+        group["games"] += 1
+        for color in colors:
+            count, total = moves.get((game_id, color), (0, 0))
+            group["moves"] += count
+            group["loss_cp"] += total
+            group["mistakes"] += mistakes.get((game_id, color), 0)
+            group["categories"].update(categories.get((game_id, color), []))
+        if player and colors:
+            winner, points = RESULT_POINTS.get(result or "", (None, None))
+            if points is None:
+                continue
+            if winner is None:
+                group["draws"] += 1
+            elif winner == colors[0]:
+                group["wins"] += 1
+            else:
+                group["losses"] += 1
+
+    rows = []
+    for key in TIME_CONTROL_ORDER:
+        group = groups.get(key)
+        if group is None:
+            continue
+        decided = group["wins"] + group["draws"] + group["losses"]
+        points = group["wins"] + 0.5 * group["draws"]
+        top = None
+        if group["categories"]:
+            top = min(group["categories"].items(), key=lambda item: (-item[1], item[0]))[0]
+        rows.append(
+            {
+                "key": key,
+                "games": group["games"],
+                "moves": group["moves"],
+                "mistakes": group["mistakes"],
+                "mistakes_per_100": (
+                    round(100.0 * group["mistakes"] / group["moves"], 1)
+                    if group["moves"]
+                    else None
+                ),
+                "average_loss": (
+                    round(group["loss_cp"] / 100.0 / group["moves"], 3)
+                    if group["moves"]
+                    else None
+                ),
+                "win_rate": round(100.0 * points / decided, 1) if player and decided else None,
+                "top_category": top,
+            }
+        )
+    return {"player": player, "time_controls": rows}
+
+
 def progress(session: Session, user_id: int, weeks: int = 26) -> dict:
     player = tracked_player(session, user_id)
     moves, mistakes, games, _ = _game_stats(session, user_id)

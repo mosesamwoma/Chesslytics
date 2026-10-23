@@ -198,6 +198,14 @@ def email_enabled() -> bool:
     return bool(smtp_host() and smtp_from() and public_url())
 
 
+def daily_puzzle_goal() -> int:
+    return env_int("DAILY_PUZZLE_GOAL", 5, minimum=1, maximum=100)
+
+
+def import_months() -> int:
+    return env_int("IMPORT_MAX_MONTHS", 6, minimum=1, maximum=24)
+
+
 def max_backup_bytes() -> int:
     return env_int("MAX_BACKUP_MB", 32, minimum=1, maximum=256) * 1024 * 1024
 

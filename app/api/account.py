@@ -26,6 +26,10 @@ class EmailChange(BaseModel):
     password: str = Field(min_length=1, max_length=security.MAX_PASSWORD_LENGTH)
 
 
+class DigestChange(BaseModel):
+    enabled: bool
+
+
 class PasswordConfirmation(BaseModel):
     password: str = Field(min_length=1, max_length=security.MAX_PASSWORD_LENGTH)
 
@@ -160,3 +164,22 @@ async def restore_backup(
     )
     db.commit()
     return result
+
+
+@router.put("/digest")
+def set_digest(
+    change: DigestChange,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if change.enabled:
+        _require_email_support()
+        if not user.email or user.email_verified_at is None:
+            raise HTTPException(
+                status_code=400, detail="confirm your email address before turning on the digest"
+            )
+    user.digest_enabled = change.enabled
+    if change.enabled:
+        user.last_digest_at = None
+    db.commit()
+    return {"user": user_service.user_payload(user, private=True)}

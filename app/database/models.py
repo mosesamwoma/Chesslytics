@@ -75,6 +75,11 @@ class User(Base):
     email_verified_at: Mapped[Optional[datetime]] = mapped_column(
         UTCDateTime(), nullable=True
     )
+    daily_goal: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    digest_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    last_digest_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
 
 
 class AccountToken(Base):
@@ -163,6 +168,8 @@ class Game(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     analyzed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
     analyzed_depth: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
     moves: Mapped[list["Move"]] = relationship(
         back_populates="game", cascade="all, delete-orphan", order_by="Move.ply"

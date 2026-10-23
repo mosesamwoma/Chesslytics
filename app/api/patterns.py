@@ -70,6 +70,13 @@ def progress(
     return progress_service.progress(db, user.id, weeks)
 
 
+@router.get("/time-controls")
+def time_controls(
+    user: User = Depends(auth.current_user), db: Session = Depends(get_db)
+) -> dict:
+    return progress_service.time_controls(db, user.id)
+
+
 @router.get("/openings")
 def openings(
     min_games: int = Query(1, ge=1, le=100),

@@ -26,6 +26,7 @@ from app.chess.pgn_parser import clock_of, game_fingerprint, game_metadata
 
 MATE_SCORE_CP = 10_000
 MAX_LOSS_CP = 2_000
+MAX_LINE_PLIES = 7
 WORKER_THREADS = 1
 START_METHOD = "spawn"
 CLEAR_HASH = {"Clear Hash": None}
@@ -48,6 +49,19 @@ def win_percent(cp: int) -> float:
 
 def clamp_loss(loss_cp: int) -> int:
     return max(-MAX_LOSS_CP, min(MAX_LOSS_CP, loss_cp))
+
+
+def best_line(board: chess.Board, pv: list) -> list[str]:
+    probe = board.copy(stack=False)
+    line: list[str] = []
+    for move in pv[:MAX_LINE_PLIES]:
+        if move not in probe.legal_moves:
+            break
+        line.append(move.uci())
+        probe.push(move)
+    if len(line) % 2 == 0 and line:
+        line.pop()
+    return line
 
 
 def evaluate_move(
@@ -141,6 +155,7 @@ def evaluate_move(
                 else None
             ),
             depth_reached=info_before.get("depth"),
+            best_line=best_line(board, pv),
         )
 
     except Exception as exc:

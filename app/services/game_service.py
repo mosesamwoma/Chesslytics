@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import math
+import re
 from pathlib import Path
 from typing import Optional
 
 import chess.pgn
-from sqlalchemy import delete, func, select
+from sqlalchemy import String, cast, delete, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import settings
@@ -13,6 +15,13 @@ from app.database.models import Game, Mistake, Move
 
 ALLOWED_SUFFIXES = {".pgn", ".txt"}
 EMPTY_HEADERS = {"", "?", "-"}
+MAX_NOTES_CHARS = 2000
+MAX_TAGS = 10
+MAX_TAG_CHARS = 24
+TAG_PATTERN = re.compile(r"^[\w][\w \-]*$")
+RAW_RESULTS = {"1-0", "0-1", "1/2-1/2", "*"}
+PLAYER_RESULTS = {"won", "lost", "drawn"}
+SORTS = {"date_desc", "date_asc", "mistakes_desc", "opening_asc"}
 
 
 class QuotaExceeded(ValueError):
@@ -165,6 +174,17 @@ def import_pgn(
     quota: Optional[int] = None,
 ) -> dict:
     games, errors = parse_pgn(text)
+    return import_games(session, user_id, games, errors, source, quota)
+
+
+def import_games(
+    session: Session,
+    user_id: int,
+    games: list[chess.pgn.Game],
+    errors: list[str],
+    source: Optional[str] = None,
+    quota: Optional[int] = None,
+) -> dict:
     limit = settings.max_games_per_upload()
     if len(games) > limit:
         raise ValueError(
@@ -204,19 +224,211 @@ def _counts(session: Session, ids: list[int]) -> tuple[dict, dict]:
     return moves, mistakes
 
 
-def list_games(session: Session, user_id: int, limit: int = 100, offset: int = 0) -> list[dict]:
-    statement = (
-        select(Game)
-        .where(Game.user_id == user_id)
-        .order_by(Game.date.desc().nullslast(), Game.id.desc())
-        .limit(max(1, min(limit, 500)))
-        .offset(max(0, offset))
+def move_accuracy(win_before: float, win_after: float) -> float:
+    drop = max(win_before - win_after, 0.0)
+    value = 103.1668 * math.exp(-0.04354 * drop) - 3.1669
+    return max(0.0, min(100.0, value))
+
+
+def _mean_accuracy(totals: dict[str, list[float]]) -> dict:
+    return {
+        color: (round(sum(values) / len(values), 1) if values else None)
+        for color, values in totals.items()
+    }
+
+
+def accuracy_by_game(session: Session, ids: list[int]) -> dict[int, dict]:
+    if not ids:
+        return {}
+    totals: dict[int, dict[str, list[float]]] = {}
+    rows = session.execute(
+        select(Move.game_id, Move.color, Move.winpct_before, Move.winpct_after).where(
+            Move.game_id.in_(ids),
+            Move.winpct_before.is_not(None),
+            Move.winpct_after.is_not(None),
+        )
+    ).all()
+    for game_id, color, before, after in rows:
+        bucket = totals.setdefault(game_id, {"white": [], "black": []})
+        if color in bucket:
+            bucket[color].append(move_accuracy(before, after))
+    return {game_id: _mean_accuracy(bucket) for game_id, bucket in totals.items()}
+
+
+def accuracy_from_moves(moves: list) -> dict:
+    totals: dict[str, list[float]] = {"white": [], "black": []}
+    for move in moves:
+        if move.winpct_before is None or move.winpct_after is None:
+            continue
+        if move.color in totals:
+            totals[move.color].append(move_accuracy(move.winpct_before, move.winpct_after))
+    return _mean_accuracy(totals)
+
+
+def _like(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _filters(
+    user_id: int,
+    q: Optional[str],
+    result: Optional[str],
+    analyzed: Optional[bool],
+    opening: Optional[str],
+    color: Optional[str],
+    player: Optional[str],
+    tag: Optional[str],
+) -> list:
+    clauses: list = [Game.user_id == user_id]
+    wanted = (player or "").strip().lower()
+    white_is = func.lower(Game.white) == wanted
+    black_is = func.lower(Game.black) == wanted
+
+    if q:
+        pattern = _like(q.strip())
+        clauses.append(
+            or_(
+                Game.white.ilike(pattern, escape="\\"),
+                Game.black.ilike(pattern, escape="\\"),
+                Game.opening.ilike(pattern, escape="\\"),
+                Game.event.ilike(pattern, escape="\\"),
+            )
+        )
+    if result:
+        if result in RAW_RESULTS:
+            clauses.append(Game.result == result)
+        elif result in PLAYER_RESULTS:
+            if not wanted:
+                clauses.append(false())
+            elif result == "won":
+                clauses.append(or_(white_is & (Game.result == "1-0"), black_is & (Game.result == "0-1")))
+            elif result == "lost":
+                clauses.append(or_(white_is & (Game.result == "0-1"), black_is & (Game.result == "1-0")))
+            else:
+                clauses.append((white_is | black_is) & (Game.result == "1/2-1/2"))
+    if analyzed is True:
+        clauses.append(Game.analyzed_at.is_not(None))
+    elif analyzed is False:
+        clauses.append(Game.analyzed_at.is_(None))
+    if opening:
+        clauses.append(Game.opening.ilike(_like(opening.strip()), escape="\\"))
+    if color in ("white", "black"):
+        if not wanted:
+            clauses.append(false())
+        else:
+            clauses.append(white_is if color == "white" else black_is)
+    if tag:
+        wanted_tag = _like(tag.strip().lower())[1:-1]
+        clauses.append(
+            cast(Game.tags, String).like(f'%"{wanted_tag}"%', escape="\\")
+        )
+    return clauses
+
+
+def count_games_filtered(
+    session: Session,
+    user_id: int,
+    q: Optional[str] = None,
+    result: Optional[str] = None,
+    analyzed: Optional[bool] = None,
+    opening: Optional[str] = None,
+    color: Optional[str] = None,
+    player: Optional[str] = None,
+    tag: Optional[str] = None,
+) -> int:
+    clauses = _filters(user_id, q, result, analyzed, opening, color, player, tag)
+    return int(session.scalar(select(func.count(Game.id)).where(*clauses)) or 0)
+
+
+def list_games(
+    session: Session,
+    user_id: int,
+    limit: int = 100,
+    offset: int = 0,
+    q: Optional[str] = None,
+    result: Optional[str] = None,
+    analyzed: Optional[bool] = None,
+    opening: Optional[str] = None,
+    color: Optional[str] = None,
+    player: Optional[str] = None,
+    tag: Optional[str] = None,
+    sort: str = "date_desc",
+) -> list[dict]:
+    clauses = _filters(user_id, q, result, analyzed, opening, color, player, tag)
+    statement = select(Game).where(*clauses)
+    mistake_total = (
+        select(func.count(Mistake.id)).where(Mistake.game_id == Game.id).scalar_subquery()
     )
+    if sort == "date_asc":
+        statement = statement.order_by(Game.date.asc().nullslast(), Game.id.asc())
+    elif sort == "mistakes_desc":
+        statement = statement.order_by(mistake_total.desc(), Game.id.desc())
+    elif sort == "opening_asc":
+        statement = statement.order_by(Game.opening.asc().nullslast(), Game.id.desc())
+    else:
+        statement = statement.order_by(Game.date.desc().nullslast(), Game.id.desc())
+    statement = statement.limit(max(1, min(limit, 500))).offset(max(0, offset))
     rows = list(session.scalars(statement))
-    moves, mistakes = _counts(session, [row.id for row in rows])
+    ids = [row.id for row in rows]
+    moves, mistakes = _counts(session, ids)
+    accuracy = accuracy_by_game(session, ids)
     return [
-        game_summary(row, int(mistakes.get(row.id, 0)), int(moves.get(row.id, 0)))
+        game_summary(
+            row,
+            int(mistakes.get(row.id, 0)),
+            int(moves.get(row.id, 0)),
+            accuracy.get(row.id),
+        )
         for row in rows
+    ]
+
+
+def clean_notes(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).replace("\x00", "").strip()
+    if len(text) > MAX_NOTES_CHARS:
+        raise ValueError(f"notes may not be longer than {MAX_NOTES_CHARS} characters")
+    return text or None
+
+
+def clean_tags(values: Optional[list]) -> Optional[list[str]]:
+    if values is None:
+        return None
+    if not isinstance(values, list):
+        raise ValueError("tags must be a list")
+    cleaned: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError("every tag must be text")
+        tag = " ".join(value.strip().lower().split())
+        if not tag:
+            continue
+        if len(tag) > MAX_TAG_CHARS:
+            raise ValueError(f"a tag may not be longer than {MAX_TAG_CHARS} characters")
+        if not TAG_PATTERN.match(tag):
+            raise ValueError("tags may contain letters, numbers, spaces, hyphens and underscores")
+        if tag not in cleaned:
+            cleaned.append(tag)
+    if len(cleaned) > MAX_TAGS:
+        raise ValueError(f"a game may have at most {MAX_TAGS} tags")
+    return cleaned or None
+
+
+def all_tags(session: Session, user_id: int) -> list[dict]:
+    counts: dict[str, int] = {}
+    for tags in session.scalars(
+        select(Game.tags).where(Game.user_id == user_id, Game.tags.is_not(None))
+    ):
+        if not isinstance(tags, list):
+            continue
+        for tag in tags:
+            if isinstance(tag, str):
+                counts[tag] = counts.get(tag, 0) + 1
+    return [
+        {"tag": tag, "count": count}
+        for tag, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
 
 
@@ -295,9 +507,15 @@ def _move_row(game_id: int, move: dict) -> Move:
 
 
 def game_summary(
-    game: Game, mistake_count: Optional[int] = None, move_count: Optional[int] = None
+    game: Game,
+    mistake_count: Optional[int] = None,
+    move_count: Optional[int] = None,
+    accuracy: Optional[dict] = None,
 ) -> dict:
     return {
+        "accuracy": accuracy or {"white": None, "black": None},
+        "notes": game.notes,
+        "tags": list(game.tags) if isinstance(game.tags, list) else [],
         "id": game.id,
         "fingerprint": game.fingerprint,
         "white": game.white,
@@ -398,8 +616,8 @@ def mistake_to_dict(mistake: Mistake) -> dict:
 
 
 def game_with_moves(game: Game) -> dict:
-    detail = game_summary(game)
     moves = sorted(game.moves or [], key=lambda move: move.ply)
+    detail = game_summary(game, accuracy=accuracy_from_moves(moves))
     detail["moves"] = [move_to_dict(move) for move in moves]
     return detail
 

@@ -32,6 +32,7 @@ from app.mining.mistake_detector import MinerConfig
 from app.mining.profiler import CATEGORY_LABELS, motif_label
 from app.services import (
     analysis_service,
+    digest_service,
     export_service,
     job_service,
     token_service,
@@ -141,7 +142,9 @@ async def lifespan(_app: FastAPI):
         user_service.prune_audit(session)
         token_service.prune(session)
     job_service.recover_interrupted()
+    digest_service.scheduler.start()
     yield
+    digest_service.scheduler.stop()
     job_service.shutdown()
 
 

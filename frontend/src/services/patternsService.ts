@@ -1,5 +1,6 @@
 import type {
   OpeningsReport,
+  TimeControlReport,
   Overview,
   PatternsResponse,
   ProfileResponse,
@@ -22,6 +23,10 @@ export function getProgress(weeks = 26): Promise<Progress> {
 
 export function getOpenings(minGames = 1): Promise<OpeningsReport> {
   return get<OpeningsReport>(`/api/patterns/openings?min_games=${minGames}`)
+}
+
+export function getTimeControls(): Promise<TimeControlReport> {
+  return get<TimeControlReport>('/api/patterns/time-controls')
 }
 
 export function listProfiles(limit = 20): Promise<unknown> {

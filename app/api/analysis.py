@@ -1,17 +1,31 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import threading
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import auth, security, settings
+from app import auth, settings
 from app.api.common import read_upload
-from app.api.games import UPLOADS_PER_HOUR, import_text
-from app.database.database import get_db
+from app.api.games import (
+    IMPORTS_PER_HOUR,
+    UPLOADS_PER_HOUR,
+    ImportRequest,
+    import_remote,
+    import_text,
+    require_usable,
+    throttle,
+)
+from app.database.database import get_db, session_scope
 from app.database.models import Game, Mistake, User
+from app.sample import SAMPLE_PGN, SAMPLE_PLAYER
 from app.services import (
     analysis_service,
     export_service,
@@ -131,6 +145,56 @@ def run_analysis(
     return {"job": start_job(db, user, params)}
 
 
+def params_for(
+    db: Session,
+    user: User,
+    result: dict,
+    player: Optional[str],
+    color: str,
+    depth: Optional[int],
+    time_limit: Optional[float],
+    min_loss: float,
+    time_pressure: float,
+    ignore_decided: bool,
+) -> dict:
+    rows = game_service.games_by_fingerprint(db, user.id, result["fingerprints"])
+    return build_params(
+        sorted(row.id for row in rows),
+        player,
+        color,
+        depth,
+        time_limit,
+        min_loss,
+        time_pressure,
+        0.5,
+        1.0,
+        2.0,
+        ignore_decided,
+    )
+
+
+def launch(db: Session, user: User, result: dict, params: dict) -> dict:
+    job = None
+    job_error = None
+    try:
+        created = job_service.create_job(db, user.id, params, len(params["game_ids"]))
+        db.commit()
+        job_service.submit(created.id)
+        job = job_service.job_payload(created)
+    except job_service.JobRejected as exc:
+        db.rollback()
+        job_error = str(exc)
+    return {
+        "uploaded": result["source"],
+        "parsed": result["parsed"],
+        "stored": result["stored"],
+        "skipped": result["skipped"],
+        "errors": result["errors"],
+        "job": job,
+        "job_error": job_error,
+    }
+
+
 @router.post("/upload", status_code=202)
 async def upload_and_analyze(
     file: UploadFile = File(...),
@@ -144,60 +208,57 @@ async def upload_and_analyze(
     user: User = Depends(auth.current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    wait = security.limiter.consume(f"upload:{user.id}", UPLOADS_PER_HOUR, 3600)
-    if wait:
-        raise HTTPException(
-            status_code=429,
-            detail=f"too many uploads; try again in {wait} seconds",
-            headers={"Retry-After": str(wait)},
-        )
+    throttle(user, "upload", UPLOADS_PER_HOUR, "uploads")
     limit = build_limit(depth, time_limit)
     text = await read_upload(file)
     result = import_text(db, user, file.filename or "upload.pgn", text)
-    if not result["fingerprints"]:
-        db.rollback()
-        detail = "no usable games found in that file"
-        if result["errors"]:
-            detail = f"{detail}: {result['errors'][0]}"
-        raise HTTPException(status_code=400, detail=detail)
+    require_usable(db, result)
     db.commit()
-
-    rows = game_service.games_by_fingerprint(db, user.id, result["fingerprints"])
-    params = build_params(
-        sorted(row.id for row in rows),
+    params = params_for(
+        db,
+        user,
+        result,
         player,
         color,
         depth,
         time_limit,
         min_loss,
         time_pressure,
-        0.5,
-        1.0,
-        2.0,
         ignore_decided,
     )
     params["limit"] = limit
+    return launch(db, user, result, params)
 
-    job = None
-    job_error = None
-    try:
-        created = job_service.create_job(db, user.id, params, len(params["game_ids"]))
-        db.commit()
-        job_service.submit(created.id)
-        job = job_service.job_payload(created)
-    except job_service.JobRejected as exc:
-        db.rollback()
-        job_error = str(exc)
 
-    return {
-        "uploaded": result["source"],
-        "parsed": result["parsed"],
-        "stored": result["stored"],
-        "skipped": result["skipped"],
-        "errors": result["errors"],
-        "job": job,
-        "job_error": job_error,
-    }
+@router.post("/import", status_code=202)
+def import_and_analyze(
+    request: ImportRequest,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    throttle(user, "import", IMPORTS_PER_HOUR, "imports")
+    result = import_remote(db, user, request)
+    require_usable(db, result)
+    db.commit()
+    params = params_for(
+        db, user, result, request.username.strip(), "both", None, None, 1.0, 30.0, True
+    )
+    return launch(db, user, result, params)
+
+
+@router.post("/sample", status_code=202)
+def analyze_sample(
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    throttle(user, "upload", UPLOADS_PER_HOUR, "uploads")
+    result = import_text(db, user, "sample.pgn", SAMPLE_PGN)
+    require_usable(db, result)
+    db.commit()
+    params = params_for(
+        db, user, result, SAMPLE_PLAYER, "both", None, None, 1.0, 30.0, True
+    )
+    return launch(db, user, result, params)
 
 
 @router.get("/jobs")
@@ -228,6 +289,87 @@ def get_job(
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     return {"job": job_service.job_payload(job)}
+
+
+def job_snapshot(owner_id: int, job_id: int) -> Optional[dict]:
+    with session_scope() as session:
+        job = job_service.get_job(session, owner_id, job_id)
+        return job_service.job_payload(job) if job is not None else None
+
+
+MAX_STREAMS_PER_USER = 4
+STREAM_SECONDS = 3600
+_streams: dict[int, int] = {}
+_streams_lock = threading.Lock()
+
+
+def open_stream(owner_id: int) -> bool:
+    with _streams_lock:
+        if _streams.get(owner_id, 0) >= MAX_STREAMS_PER_USER:
+            return False
+        _streams[owner_id] = _streams.get(owner_id, 0) + 1
+        return True
+
+
+def close_stream(owner_id: int) -> None:
+    with _streams_lock:
+        remaining = _streams.get(owner_id, 0) - 1
+        if remaining > 0:
+            _streams[owner_id] = remaining
+        else:
+            _streams.pop(owner_id, None)
+
+STREAM_TICK = 1.0
+STREAM_HEARTBEAT = 15
+
+
+@router.get("/jobs/{job_id}/stream")
+async def stream_job(
+    job_id: int,
+    request: Request,
+    user: User = Depends(auth.current_user),
+) -> StreamingResponse:
+    owner_id = user.id
+    if not open_stream(owner_id):
+        raise HTTPException(
+            status_code=429,
+            detail="too many live progress connections; close another tab and try again",
+            headers={"Retry-After": "5"},
+        )
+
+    async def events():
+        last = None
+        elapsed = 0.0
+        quiet = 0.0
+        try:
+            while elapsed < STREAM_SECONDS:
+                if await request.is_disconnected():
+                    return
+                payload = await run_in_threadpool(job_snapshot, owner_id, job_id)
+                if payload is None:
+                    yield "event: gone\ndata: {}\n\n"
+                    return
+                blob = json.dumps(payload)
+                if blob != last:
+                    last = blob
+                    quiet = 0.0
+                    yield f"data: {blob}\n\n"
+                elif quiet >= STREAM_HEARTBEAT:
+                    quiet = 0.0
+                    yield ": keep-alive\n\n"
+                if payload["status"] in job_service.FINISHED_STATUSES:
+                    return
+                await asyncio.sleep(STREAM_TICK)
+                elapsed += STREAM_TICK
+                quiet += STREAM_TICK
+        finally:
+            close_stream(owner_id)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/jobs/{job_id}/cancel")

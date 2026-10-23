@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom'
 import ErrorNotice from '../components/ErrorNotice.tsx'
 import OpeningsTable from '../components/OpeningsTable.tsx'
 import PatternCard from '../components/PatternCard.tsx'
+import TimeControlTable from '../components/TimeControlTable.tsx'
 import { useAsync } from '../hooks/useAsync.ts'
-import { getOpenings, listPatterns } from '../services/patternsService.ts'
+import { getOpenings, getTimeControls, listPatterns } from '../services/patternsService.ts'
 import { PATTERN_KIND_LABELS } from '../labels.ts'
 import { toProblem } from '../services/api.ts'
 import type { Problem } from '../services/api.ts'
@@ -17,6 +18,7 @@ export default function Patterns() {
   const [kind, setKind] = useState('all')
   const [recurringOnly, setRecurringOnly] = useState(false)
   const openings = useAsync(() => getOpenings(1), [])
+  const timeControls = useAsync(() => getTimeControls(), [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -139,6 +141,17 @@ export default function Patterns() {
           <ErrorNotice error={openings.error} />
         ) : openings.data ? (
           <OpeningsTable report={openings.data} />
+        ) : (
+          <p className="muted">Loading&hellip;</p>
+        )}
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <h2>Time controls</h2>
+        {timeControls.error ? (
+          <ErrorNotice error={timeControls.error} />
+        ) : timeControls.data ? (
+          <TimeControlTable report={timeControls.data} />
         ) : (
           <p className="muted">Loading&hellip;</p>
         )}

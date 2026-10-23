@@ -307,6 +307,7 @@ def build_records(
                     "material_before": move.get("material_before"),
                     "material_after": move.get("material_after"),
                     "king_safety_after": move.get("king_safety_after"),
+                    "best_line": move.get("best_line") or [],
                 },
                 "time_remaining": clock_before,
                 "clock_after": move.get("clock_after"),

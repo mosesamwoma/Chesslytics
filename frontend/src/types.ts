@@ -16,6 +16,7 @@ export interface User {
   created_at: string | null
   last_login_at: string | null
   email_verified: boolean
+  digest_enabled: boolean
   email?: string | null
 }
 
@@ -43,13 +44,44 @@ export interface Game {
   analyzed_depth: number | null
   move_count: number
   mistake_count: number
+  accuracy: Accuracy
+  notes: string | null
+  tags: string[]
+}
+
+export interface Accuracy {
+  white: number | null
+  black: number | null
 }
 
 export interface GamesPage {
   total: number
   limit: number
   offset: number
+  player: string | null
   games: Game[]
+}
+
+export interface GameFilters {
+  q?: string
+  result?: string
+  analyzed?: string
+  opening?: string
+  color?: string
+  tag?: string
+  sort?: string
+}
+
+export interface TagCount {
+  tag: string
+  count: number
+}
+
+export interface ImportOptions {
+  source: 'chesscom' | 'lichess'
+  username: string
+  max_games: number
+  months: number
 }
 
 export interface Move {
@@ -90,6 +122,7 @@ export interface HungPiece {
 export interface MistakeFacts {
   motifs_allowed?: Motif[]
   hung_piece?: HungPiece | null
+  best_line?: string[]
 }
 
 export interface Mistake {
@@ -349,7 +382,23 @@ export interface PuzzlePage {
   puzzles: Puzzle[]
 }
 
+export interface ActivityDay {
+  date: string
+  count: number
+  met: boolean
+}
+
+export interface Activity {
+  daily_goal: number
+  today: number
+  goal_met: boolean
+  current_streak: number
+  longest_streak: number
+  week: ActivityDay[]
+}
+
 export interface TrainingStats {
+  activity: Activity
   due_now: number
   new_puzzles: number
   mastered: number
@@ -375,6 +424,31 @@ export interface AttemptResult {
   fen_after: string
   attempts?: { attempts: number }
   review?: Review | null
+  line?: LineStep | null
+}
+
+export interface LineStep {
+  done: boolean
+  step: number
+  total: number
+  opponent_uci: string
+  opponent_san: string
+  fen: string
+  legal_moves: string[]
+}
+
+export interface LineResult {
+  correct: boolean
+  done: boolean
+  step: number
+  total: number
+  played_san: string
+  fen: string
+  legal_moves?: string[]
+  opponent_uci?: string
+  opponent_san?: string
+  expected_uci?: string
+  expected_san?: string
 }
 
 export interface Solution {
@@ -384,6 +458,7 @@ export interface Solution {
   played_move?: string | null
   book_move?: string | null
   category_basis?: string | null
+  best_line_san?: string[]
 }
 
 export interface CoachSection {
@@ -397,6 +472,22 @@ export interface CoachInsight {
   summary: string
   focus_drill: string
   sections: CoachSection[] | null
+}
+
+export interface TimeControlRow {
+  key: string
+  games: number
+  moves: number
+  mistakes: number
+  mistakes_per_100: number | null
+  average_loss: number | null
+  win_rate: number | null
+  top_category: string | null
+}
+
+export interface TimeControlReport {
+  player: string | null
+  time_controls: TimeControlRow[]
 }
 
 export interface AdminUser {

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import ConfirmDialog from '../components/ConfirmDialog.tsx'
 import ErrorNotice from '../components/ErrorNotice.tsx'
 import GameCard from '../components/GameCard.tsx'
+import GameFilters from '../components/GameFilters.tsx'
+import ImportForm from '../components/ImportForm.tsx'
 import UploadForm from '../components/UploadForm.tsx'
 import JobProgress from '../components/JobProgress.tsx'
 import useJobRunner from '../hooks/useJobRunner.ts'
@@ -9,13 +11,14 @@ import { useRetryAfter } from '../hooks/useRetryAfter.ts'
 import { toProblem } from '../services/api.ts'
 import type { Problem } from '../services/api.ts'
 import { deleteGame, listGames } from '../services/gamesService.ts'
-import { isFinished, listJobs, runAnalysis } from '../services/analysisService.ts'
-import type { Game, GamesPage, Job, UploadSummary } from '../types.ts'
+import { analyzeSample, isFinished, listJobs, runAnalysis } from '../services/analysisService.ts'
+import type { Game, GameFilters as Filters, GamesPage, Job, UploadSummary } from '../types.ts'
 
 const PAGE_SIZE = 20
 
 export default function Games() {
   const [page, setPage] = useState(0)
+  const [filters, setFilters] = useState<Filters>({})
   const [data, setData] = useState<GamesPage | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Problem>(null)
@@ -30,7 +33,11 @@ export default function Games() {
     setLoading(true)
     setError(null)
     try {
-      const payload = await listGames({ limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+      const payload = await listGames({
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+        filters,
+      })
       const last = Math.max(0, Math.ceil(payload.total / PAGE_SIZE) - 1)
       if (page > last) {
         setPage(last)
@@ -42,7 +49,7 @@ export default function Games() {
     } finally {
       setLoading(false)
     }
-  }, [page])
+  }, [page, filters])
 
   useEffect(() => {
     load()
@@ -88,9 +95,27 @@ export default function Games() {
     }
   }
 
-  const uploaded = (summary: UploadSummary) => {
+  const uploaded = (summary: UploadSummary | null) => {
     load()
-    if (summary.job) track(summary.job)
+    if (summary && summary.job) track(summary.job)
+  }
+
+  const changeFilters = useCallback((next: Filters) => {
+    setPage(0)
+    setFilters(next)
+  }, [])
+
+  const trySample = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const summary = await analyzeSample()
+      setBusy(false)
+      uploaded(summary)
+    } catch (err) {
+      setError(toProblem(err))
+      setBusy(false)
+    }
   }
 
   const confirmRemove = async () => {
@@ -109,6 +134,8 @@ export default function Games() {
   }
 
   const total = data?.total ?? 0
+  const filtering = Object.values(filters).some(Boolean)
+  const empty = !loading && total === 0 && !filtering
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)
 
   return (
@@ -133,6 +160,8 @@ export default function Games() {
 
       <UploadForm onUploaded={uploaded} disabled={runner.running} />
 
+      <ImportForm onImported={uploaded} disabled={runner.running} />
+
       <JobProgress job={runner.job} onCancel={runner.cancel} />
 
       {runner.job && runner.job.status === 'done' && runner.job.summary ? (
@@ -155,15 +184,39 @@ export default function Games() {
       <ErrorNotice error={runner.error} style={{ marginTop: 12 }} />
       <ErrorNotice error={error} style={{ marginTop: 16 }} />
 
+      {!empty ? (
+        <GameFilters filters={filters} player={data?.player ?? null} onChange={changeFilters} />
+      ) : null}
+
       <div className={loading && data ? 'loading-dim' : undefined} style={{ marginTop: 16 }}>
         {data && data.games.length ? (
           <div className="list">
             {data.games.map((game) => (
-              <GameCard key={game.id} game={game} onDelete={setPendingDelete} />
+              <GameCard
+                key={game.id}
+                game={game}
+                player={data.player}
+                onDelete={setPendingDelete}
+              />
             ))}
           </div>
+        ) : empty ? (
+          <div className="notice">
+            <p style={{ marginTop: 0 }}>
+              No games stored yet. Upload a PGN file, import by username, or see how it works
+              with three short sample games.
+            </p>
+            <button
+              type="button"
+              className="button primary"
+              onClick={trySample}
+              disabled={busy || runner.running}
+            >
+              {busy ? 'Starting…' : 'Try a sample game'}
+            </button>
+          </div>
         ) : (
-          !loading && <p className="muted">No games stored yet.</p>
+          !loading && <p className="muted">No games match these filters.</p>
         )}
       </div>
 

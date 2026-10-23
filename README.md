@@ -23,6 +23,13 @@ seeing anyone's games.
 - **Backup and restore**: download everything you own as one JSON file and restore it later.
 - **Operations**: request IDs, optional JSON logs, an analysis history page with retry, and optional Sentry error tracking.
 - **Exports** in JSON, CSV and JSONL, plus a CLI for batch work.
+- **Import by username** from Chess.com and Lichess, with no PGN file needed, and a one-click sample game for new accounts.
+- **Better game review**: best-move and played-move arrows, board coordinates, a per-game accuracy score, notes and tags, and copy buttons for FEN and PGN.
+- **Library filters**: search, result, colour, opening, analysed or not, tag and sort order.
+- **Multi-move puzzles** that continue along the engine's best line, a hint button, a daily goal with a practice streak, and a CSV export of your puzzles.
+- **Time-control breakdown** comparing bullet, blitz, rapid and classical.
+- **Weekly email digest** (opt-in, needs email configured) and live job progress over server-sent events.
+- **Typed frontend**: React with strict TypeScript, so a changed API shape fails the build instead of the page.
 
 ## Security model
 
@@ -63,30 +70,29 @@ setting the app uses a local SQLite file. Generate a secret with:
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-From the repository root (`Chesslytics/`), build the frontend once, then start the server:
+Build the frontend once, then start the server:
 
 ```bash
-npm --prefix frontend ci
-npm --prefix frontend run build
-python -m uvicorn app.main:app --port 8000
+cd frontend && npm ci && npm run build && cd ..
+uvicorn app.main:app --port 8000
 ```
 
 Open http://127.0.0.1:8000 and sign in as the administrator. For frontend development run
-`npm run dev` from `frontend/`; the dev server proxies `/api` to port 8000. If your shell is
-already in `frontend/`, run `npm ci && npm run build` there, then return to the repository root
-with `cd ..` before starting the backend.
+`npm run dev` in `frontend/`; the dev server proxies `/api` to port 8000.
 
-### TypeScript frontend
+### Frontend (TypeScript)
 
-The frontend is a Vite application written in TypeScript and React. From the repository root:
+The frontend is React with TypeScript in strict mode, bundled by Vite. Run these from `frontend/`:
 
 ```bash
-npm --prefix frontend ci
-npm --prefix frontend run dev
+npm run dev          # dev server on http://127.0.0.1:5173
+npm run typecheck    # tsc --noEmit
+npm run build        # type check, then production bundle in dist/
 ```
 
-Use `npm run build` for a production build and `npm run preview` to preview the built files
-locally. Keep `frontend/package-lock.json` committed when changing frontend dependencies.
+`src/types.ts` describes what the backend returns. If you change a response shape in the Python
+code, change the matching interface there; `npm run typecheck` then points at every screen that
+needs updating.
 
 ### Updating dependencies
 
@@ -220,14 +226,16 @@ features are hidden and everything else works.
 
 ## Using the application
 
-- **Games**: upload a `.pgn` file. It is stored, then analysed in the background. You can leave the page and come back; progress resumes.
+- **Games**: upload a `.pgn` file, or import recent games by Chess.com or Lichess username. Games are stored, then analysed in the background; you can leave the page and come back. Filter by result, colour, opening, tag or analysis state, and sort by date, mistakes or opening. New accounts can start with **Try a sample game**.
+- **Game review**: click a game to see the evaluation chart, the board with the engine's best move (green arrow) and your move (red arrow), an accuracy score per side, and notes and tags you can edit. **Copy FEN** and **Copy PGN** put the position or the game on your clipboard.
 - **Analyses**: every analysis you started, with status, duration and settings. Cancel one that is running, or run a finished one again.
 - **Dashboard**: aggregate views of your mistakes plus **Your progress**, two weekly charts (average loss per move, mistakes per 100 moves). Lower is better. Weeks start on Monday and use the game date, falling back to the upload date.
 - **Patterns**: recurring patterns, and an **Openings** table with games, win rate, average loss and the move number where mistakes cluster. Win rates need your username to be entered when you analyse.
 - **Chess DNA**: your mistake profile.
-- **Training**: replay the position before each mistake and get graded by the engine. **Practice** modes: smart review (due first, then new), due for review, new puzzles, every puzzle. A right answer moves a puzzle up one of five boxes (reviewed again after 1, 3, 7, 14 and 30 days); a wrong answer sends it back to the start (15 minutes).
+- **Training**: use **Hint** to see which piece to move, or **Show solution**. When the engine's best line is longer than one move, a correct first move leads to follow-up moves along that line (they are practice only and do not change your review schedule). A daily goal and streak track your practice (days are counted in UTC), and **Export puzzles (CSV)** downloads FEN, best move and best line. Replay the position before each mistake and get graded by the engine. **Practice** modes: smart review (due first, then new), due for review, new puzzles, every puzzle. A right answer moves a puzzle up one of five boxes (reviewed again after 1, 3, 7, 14 and 30 days); a wrong answer sends it back to the start (15 minutes).
 - **Coach**: optional AI summary of your profile (needs `GEMINI_API_KEY`; limited per user per day).
-- **Account**: change your password, manage your email address, download a backup or restore one, export mistakes, delete your account.
+- **Patterns** also has a **Time controls** table that groups games as ultrabullet, bullet, blitz, rapid, classical or daily using base time plus 40 times the increment.
+- **Account**: switch the weekly digest on once your email is confirmed, change your password, manage your email address, download a backup or restore one, export mistakes, delete your account.
 
 **Backup and restore.** The backup is one JSON file with your games, every mistake, your puzzle
 attempts and your latest profile. Restoring only adds games you do not already have, never
@@ -244,7 +252,10 @@ that were analysed in that run.
 ```bash
 python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --player Jude254 --limit-time 0.1
 python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --save --user Jude254
+python -m app.manage send-digests
 ```
+
+`send-digests` sends the weekly digest to everyone who is due. The running server does this on its own every hour when email is configured; the command is for cron setups and testing.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -279,15 +290,23 @@ cookie. Every `POST`, `PATCH` and `DELETE` needs the `X-CSRF-Protection: 1` head
 | `PUT` / `DELETE` / `POST` | `/api/account/email`, `/api/account/email/resend` | Manage your email address |
 | `GET` / `POST` | `/api/account/backup`, `/api/account/backup/restore` | Download or restore a backup |
 | `POST` | `/api/games/upload` | Store games without analysing |
-| `GET` / `DELETE` | `/api/games`, `/api/games/{id}` | Library |
+| `POST` | `/api/games/import`, `/api/analysis/import` | Fetch games from Chess.com or Lichess (`source`, `username`, `max_games`, `months`); the second also starts an analysis |
+| `GET` / `DELETE` | `/api/games`, `/api/games/{id}` | Library. `GET /api/games` accepts `q`, `result`, `color`, `analyzed`, `opening`, `tag`, `sort` |
+| `PATCH` | `/api/games/{id}` | Set `notes` and `tags` |
+| `GET` | `/api/games/tags`, `/api/games/{id}/pgn` | Your tags with counts; the stored PGN |
+| `POST` | `/api/analysis/sample` | Import three sample games and analyse them |
+| `GET` | `/api/analysis/jobs/{id}/stream` | Live job progress (server-sent events) |
 | `POST` | `/api/analysis/upload` | Store games and start an analysis job |
 | `POST` | `/api/analysis/run` | Analyse stored games (optional `game_ids`, `update_profile`) |
 | `GET` | `/api/analysis/jobs`, `/jobs/{id}` | Job history (`limit`, `offset`) and status |
 | `POST` | `/api/analysis/jobs/{id}/cancel`, `/retry` | Cancel a job, or run a finished one again |
 | `GET` | `/api/analysis/mistakes`, `/games/{id}`, `/export` | Results and exports |
 | `GET` | `/api/patterns/overview`, `/api/patterns/profile`, `/api/patterns/profiles`, `/api/patterns` | Aggregates |
-| `GET` | `/api/patterns/progress`, `/api/patterns/openings` | Weekly progress and per-opening report |
+| `GET` | `/api/patterns/progress`, `/openings`, `/time-controls` | Weekly progress, per-opening and per-time-control reports |
 | `GET` / `POST` | `/api/training/puzzles...` (`practice=queue\|due\|new\|all`), `/stats`, `/attempts` | Training |
+| `POST` | `/api/training/puzzles/{id}/continue` | Play the next move of a multi-move puzzle |
+| `PUT` / `GET` | `/api/training/goal`, `/api/training/export` | Daily goal; puzzles as CSV |
+| `PUT` | `/api/account/digest` | Turn the weekly digest on or off |
 | `GET` | `/api/coach` | AI coaching report |
 | `GET` / `PATCH` / `POST` / `DELETE` | `/api/admin/stats`, `/users`, `/users/{id}/reset-link`, `/audit` | Administrators only |
 
@@ -328,6 +347,8 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 | `PROFILES_KEPT_PER_USER`, `JOB_RETENTION_DAYS` | `5`, `14` | History kept. |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE` | `5`, `5`, `300` | Connection pool tuning. |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | none, `gemini-2.5-flash` | Enables Coach. |
+| `DAILY_PUZZLE_GOAL` | `5` | Default daily puzzle goal. Each user can change their own. |
+| `IMPORT_MAX_MONTHS` | `6` | Most Chess.com monthly archives one import may read. |
 | `PUZZLE_TOLERANCE` | `5.0` | Win-percentage a training answer may lose and still count as correct. |
 | `PARALLEL_WORKERS`, `VERIFY_WITH`, `BOOK_PATH`, `ANALYSIS_DIR` | see `.env.example` | Command-line defaults. |
 | `SITE_ADDRESS` | `:80` | Caddy address (compose only), e.g. your domain. |
@@ -335,7 +356,9 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 
 ## Known limitations
 
-- Rate limits and the job queue are in process memory, so run one application process. Account lockout is stored in the database and is shared.
+- Rate limits, the job queue, live-progress connection counts and the weekly digest scheduler are in process memory, so run one application process. Two processes would send duplicate digests.
+- Importing by username needs the server to reach api.chess.com and lichess.org. Only public games are available, and both sites rate limit requests.
+- Multi-move puzzles exist only for mistakes analysed after this feature was added; older mistakes stay single-move until you re-analyse. Account lockout is stored in the database and is shared.
 - Analysis jobs interrupted by a restart are marked failed (queued ones are resumed).
 - Heuristic tactics detection (SEE, motifs) is not a full tactics solver.
 - Time-pressure statistics need clock annotations in the PGN (Chess.com exports have them).

@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AnalysisChart from '../components/AnalysisChart.tsx'
-import ChessBoard, { squareFromUci } from '../components/ChessBoard.tsx'
+import ChessBoard, { sourceFromUci, squareFromUci } from '../components/ChessBoard.tsx'
+import type { BoardArrow } from '../components/ChessBoard.tsx'
+import GameNotes from '../components/GameNotes.tsx'
 import ErrorNotice from '../components/ErrorNotice.tsx'
 import JobProgress from '../components/JobProgress.tsx'
 import MistakeCard from '../components/MistakeCard.tsx'
+import { useCopy } from '../hooks/useCopy.ts'
 import useJobRunner from '../hooks/useJobRunner.ts'
 import { getAnalyzedGame, runAnalysis } from '../services/analysisService.ts'
 import { toProblem } from '../services/api.ts'
+import { getPgn } from '../services/gamesService.ts'
 import type { Problem } from '../services/api.ts'
-import type { GameDetail, Mistake, Move, Side } from '../types.ts'
+import type { Game, GameDetail, Mistake, Move, Side } from '../types.ts'
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
@@ -21,6 +25,10 @@ export default function GameAnalysis() {
   const [busy, setBusy] = useState(false)
   const [ply, setPly] = useState(1)
   const [perspective, setPerspective] = useState<Side>('white')
+  const [showArrows, setShowArrows] = useState(true)
+  const [copyError, setCopyError] = useState<Problem>(null)
+  const fenCopy = useCopy()
+  const pgnCopy = useCopy()
   const runner = useJobRunner()
 
   const load = useCallback(async () => {
@@ -58,6 +66,40 @@ export default function GameAnalysis() {
     ? moves[moves.length - 1].fen_after || START_FEN
     : current?.fen_before || START_FEN
   const selected = atEnd ? undefined : mistakePlies.get(ply)
+
+  const arrows: BoardArrow[] = useMemo(() => {
+    if (!showArrows || atEnd || !current) return []
+    const best = current.best_move_uci
+    const played = current.uci
+    const list: BoardArrow[] = []
+    if (best && sourceFromUci(best) && squareFromUci(best)) {
+      list.push({ from: sourceFromUci(best) || '', to: squareFromUci(best) || '', kind: 'best' })
+    }
+    if (played && played !== best && sourceFromUci(played) && squareFromUci(played)) {
+      list.push({
+        from: sourceFromUci(played) || '',
+        to: squareFromUci(played) || '',
+        kind: 'played',
+      })
+    }
+    return list
+  }, [showArrows, atEnd, current])
+
+  const copyPgn = async () => {
+    setCopyError(null)
+    try {
+      const payload = await getPgn(Number(gameId))
+      await pgnCopy.copy(payload.pgn)
+    } catch (err) {
+      setCopyError(toProblem(err))
+    }
+  }
+
+  const saved = (game: Game) => {
+    setData((value) =>
+      value ? { ...value, notes: game.notes, tags: game.tags } : value,
+    )
+  }
 
   const analyze = async () => {
     setBusy(true)
@@ -101,6 +143,13 @@ export default function GameAnalysis() {
             {data.opening ? ` · ${data.eco ? `${data.eco} ` : ''}${data.opening}` : ''}
             {data.analyzed_depth ? ` · depth ${data.analyzed_depth}` : ''}
           </p>
+          {data.accuracy.white !== null || data.accuracy.black !== null ? (
+            <p className="secondary" style={{ margin: 0 }}>
+              Accuracy
+              {data.accuracy.white !== null ? ` · White ${data.accuracy.white.toFixed(1)}%` : ''}
+              {data.accuracy.black !== null ? ` · Black ${data.accuracy.black.toFixed(1)}%` : ''}
+            </p>
+          ) : null}
         </div>
         <div className="row">
           <Link className="button" to="/games">
@@ -159,6 +208,7 @@ export default function GameAnalysis() {
                 <ChessBoard
                   fen={fen}
                   highlight={[squareFromUci(current?.uci)]}
+                  arrows={arrows}
                 />
                 <div className="board-controls">
                   <button
@@ -188,6 +238,26 @@ export default function GameAnalysis() {
                   </span>
                   {selected ? <span className="badge">mistake here</span> : null}
                 </div>
+
+                <div className="row">
+                  <label className="row">
+                    <input
+                      type="checkbox"
+                      checked={showArrows}
+                      onChange={(event) => setShowArrows(event.target.checked)}
+                    />
+                    <span>Show best move (green) and played move (red)</span>
+                  </label>
+                </div>
+                <div className="row">
+                  <button type="button" className="button" onClick={() => fenCopy.copy(fen)}>
+                    {fenCopy.copied ? 'FEN copied' : fenCopy.failed ? 'Copy failed' : 'Copy FEN'}
+                  </button>
+                  <button type="button" className="button" onClick={copyPgn}>
+                    {pgnCopy.copied ? 'PGN copied' : pgnCopy.failed ? 'Copy failed' : 'Copy PGN'}
+                  </button>
+                </div>
+                <ErrorNotice error={copyError} />
 
                 <div
                   className="list"
@@ -237,6 +307,14 @@ export default function GameAnalysis() {
               ))}
             </div>
           </div>
+
+          <GameNotes
+            key={data.id}
+            gameId={data.id}
+            notes={data.notes}
+            tags={data.tags}
+            onSaved={saved}
+          />
         </>
       ) : (
         <div className="notice">

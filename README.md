@@ -73,6 +73,19 @@ uvicorn app.main:app --port 8000
 Open http://127.0.0.1:8000 and sign in as the administrator. For frontend development run
 `npm run dev` in `frontend/`; the dev server proxies `/api` to port 8000.
 
+### TypeScript frontend
+
+The frontend is a Vite application written in TypeScript and React. From the repository root:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Use `npm run build` for a production build and `npm run preview` to preview the built files
+locally. Keep `frontend/package-lock.json` committed when changing frontend dependencies.
+
 ### Updating dependencies
 
 Python uses `pip`'s explicit `--upgrade` option:

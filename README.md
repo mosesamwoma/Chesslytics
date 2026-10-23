@@ -63,24 +63,26 @@ setting the app uses a local SQLite file. Generate a secret with:
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Build the frontend once, then start the server:
+From the repository root (`Chesslytics/`), build the frontend once, then start the server:
 
 ```bash
-cd frontend && npm ci && npm run build && cd ..
-uvicorn app.main:app --port 8000
+npm --prefix frontend ci
+npm --prefix frontend run build
+python -m uvicorn app.main:app --port 8000
 ```
 
 Open http://127.0.0.1:8000 and sign in as the administrator. For frontend development run
-`npm run dev` in `frontend/`; the dev server proxies `/api` to port 8000.
+`npm run dev` from `frontend/`; the dev server proxies `/api` to port 8000. If your shell is
+already in `frontend/`, run `npm ci && npm run build` there, then return to the repository root
+with `cd ..` before starting the backend.
 
 ### TypeScript frontend
 
 The frontend is a Vite application written in TypeScript and React. From the repository root:
 
 ```bash
-cd frontend
-npm ci
-npm run dev
+npm --prefix frontend ci
+npm --prefix frontend run dev
 ```
 
 Use `npm run build` for a production build and `npm run preview` to preview the built files

@@ -194,7 +194,7 @@ def smtp_security() -> str:
     return value if value in ("starttls", "ssl", "none") else "starttls"
 
 
-MAIL_PROVIDERS = ("smtp", "brevo", "resend")
+MAIL_PROVIDERS = ("smtp", "brevo", "resend", "gmail", "mailjet", "smtp2go")
 
 
 def mail_from() -> str:
@@ -209,14 +209,44 @@ def resend_api_key() -> str:
     return env_str("RESEND_API_KEY")
 
 
+def gmail_client_id() -> str:
+    return env_str("GMAIL_CLIENT_ID")
+
+
+def gmail_client_secret() -> str:
+    return env_str("GMAIL_CLIENT_SECRET")
+
+
+def gmail_refresh_token() -> str:
+    return env_str("GMAIL_REFRESH_TOKEN")
+
+
+def mailjet_api_key() -> str:
+    return env_str("MAILJET_API_KEY")
+
+
+def mailjet_secret_key() -> str:
+    return env_str("MAILJET_SECRET_KEY")
+
+
+def smtp2go_api_key() -> str:
+    return env_str("SMTP2GO_API_KEY")
+
+
 def mail_provider() -> str:
     chosen = env_str("MAIL_PROVIDER").lower()
     if chosen in MAIL_PROVIDERS:
         return chosen
+    if gmail_client_id() or gmail_client_secret() or gmail_refresh_token():
+        return "gmail"
     if brevo_api_key():
         return "brevo"
     if resend_api_key():
         return "resend"
+    if mailjet_api_key() or mailjet_secret_key():
+        return "mailjet"
+    if smtp2go_api_key():
+        return "smtp2go"
     return "smtp"
 
 
@@ -228,11 +258,28 @@ def email_missing() -> list[str]:
         missing.append("MAIL_FROM")
     provider = mail_provider()
     if provider == "smtp" and not smtp_host():
-        missing.append("SMTP_HOST (or BREVO_API_KEY / RESEND_API_KEY)")
+        missing.append("a sending method (GMAIL_*, BREVO_API_KEY, SMTP_HOST, ...)")
     if provider == "brevo" and not brevo_api_key():
         missing.append("BREVO_API_KEY")
     if provider == "resend" and not resend_api_key():
         missing.append("RESEND_API_KEY")
+    if provider == "gmail":
+        for name, value in (
+            ("GMAIL_CLIENT_ID", gmail_client_id()),
+            ("GMAIL_CLIENT_SECRET", gmail_client_secret()),
+            ("GMAIL_REFRESH_TOKEN", gmail_refresh_token()),
+        ):
+            if not value:
+                missing.append(name)
+    if provider == "mailjet":
+        for name, value in (
+            ("MAILJET_API_KEY", mailjet_api_key()),
+            ("MAILJET_SECRET_KEY", mailjet_secret_key()),
+        ):
+            if not value:
+                missing.append(name)
+    if provider == "smtp2go" and not smtp2go_api_key():
+        missing.append("SMTP2GO_API_KEY")
     return missing
 
 

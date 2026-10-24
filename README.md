@@ -162,7 +162,7 @@ Back up the `postgres-data` volume, for example with
 | `SECRET_KEY` | generated automatically by the blueprint |
 | `TRUSTED_PROXY_HOPS` | `1` (set by the blueprint; see the note below) |
 | `PUBLIC_URL` | optional: your Render address, for example `https://chesslytics.onrender.com` |
-| `MAIL_FROM`, `BREVO_API_KEY` | optional: send email over HTTPS with Brevo, to enable password reset by email (see Email below) |
+| `MAIL_FROM` and `GMAIL_*` (or another provider's key) | optional: send email over HTTPS, to enable password reset by email (see Email below) |
 | `SENTRY_DSN` | optional: a Sentry project address |
 
 The blueprint asks for each optional value; leave the ones you do not need empty.
@@ -237,31 +237,63 @@ account. Until email is configured, the sign-in page says that reset by email is
 everything else works. The **Admin console** has an **Email** card that shows whether email is on,
 lists exactly which settings are missing, and can send a test message to your own address.
 
-Email needs three things: `PUBLIC_URL`, `MAIL_FROM`, and one way to send.
+Email needs three things: `PUBLIC_URL`, `MAIL_FROM`, and one way to send. Free Render services
+block outgoing SMTP ports (25, 465 and 587), so on Render's free plan use one of the options that
+send over HTTPS. Pick one; the provider is detected from whichever settings exist, or set
+`MAIL_PROVIDER` to `gmail`, `brevo`, `resend`, `mailjet`, `smtp2go` or `smtp` to choose.
 
-- **Sending over HTTPS (use this on Render's free plan).** Free Render services block outgoing
-  SMTP ports, so use a provider with an HTTPS API. The free tier of **Brevo** works without owning
-  a domain: create an account, verify one sender address under *Senders, domains and dedicated
-  IPs*, create an API key under *SMTP and API*, then set `BREVO_API_KEY` to the key and
-  `MAIL_FROM` to the verified address (for example `Chesslytics <you@gmail.com>`). **Resend** is
-  also supported with `RESEND_API_KEY`, but it only delivers to other people once you verify a
-  domain you own. Set `MAIL_PROVIDER` to `brevo`, `resend` or `smtp` only if you set more than one
-  key; otherwise the provider is detected from whichever key exists.
-- **Sending over SMTP (your own server or a paid host).** Set `SMTP_HOST`, `SMTP_PORT`,
-  `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, and `MAIL_FROM` (or the older `SMTP_FROM`).
+| Option | Cost | Needs a domain | Settings |
+| --- | --- | --- | --- |
+| **Your own Gmail, through the Gmail API** | free, no card | no | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `MAIL_FROM` |
+| Brevo | free tier, may ask you to validate the account | no (verify one sender address) | `BREVO_API_KEY`, `MAIL_FROM` |
+| Mailjet | free tier | no (verify one sender address) | `MAILJET_API_KEY`, `MAILJET_SECRET_KEY`, `MAIL_FROM` |
+| SMTP2GO | free tier | no (verify one sender address) | `SMTP2GO_API_KEY`, `MAIL_FROM` |
+| Resend | free tier | yes, to reach anyone but yourself | `RESEND_API_KEY`, `MAIL_FROM` |
+| Any SMTP server | depends | no | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM` (not on Render's free plan) |
 
-Reset emails can go to any recipient, including Gmail addresses; the settings above only decide
-where the mail is sent *from*. If you use a Gmail address as `MAIL_FROM` through Brevo, some
-providers may put the message in spam, because the message does not come from Google's own
-servers. Sending from an address on a domain you own, with the provider's DNS records added,
-avoids that. To send through Gmail itself, use `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`,
-`SMTP_SECURITY=starttls`, your address as `SMTP_USER` and `MAIL_FROM`, and a Google **app
-password** as `SMTP_PASSWORD`; that works on hosts that allow outgoing SMTP, but not on Render's
-free plan.
+Free tiers and their conditions change, so check each provider's current terms.
+
+**Sending from your own Gmail (free, no domain, works on Render's free plan).** Mail leaves from
+Google's own servers and from your own address, so it is not treated like bulk mail, and it can go
+to any recipient. A personal Gmail account can send roughly 500 messages a day, far more than a
+password reset needs. Setup takes about ten minutes:
+
+1. Open the Google Cloud console, create a project, and under **APIs & Services > Library** enable
+   **Gmail API**.
+2. Under **OAuth consent screen** (also called **Google Auth platform**), choose **External**,
+   fill in the app name and your email, and add the scope `.../auth/gmail.send`. Then press
+   **Publish app** so the status is **In production**. This matters: while the status is
+   *Testing*, Google expires the refresh token after seven days. You do not need Google's
+   verification for your own use; you will only see an "unverified app" warning once.
+3. Under **Credentials**, create an **OAuth client ID** of type **Web application** and add
+   `https://developers.google.com/oauthplayground` as an authorised redirect URI. Copy the client
+   ID and client secret.
+4. Open the OAuth 2.0 Playground (developers.google.com/oauthplayground). Press the gear icon,
+   tick **Use your own OAuth credentials**, and paste the client ID and secret. In step 1, type
+   `https://www.googleapis.com/auth/gmail.send` into the scope box, press **Authorize APIs**, sign
+   in with the Gmail account that should send the mail, and accept the unverified-app warning
+   (**Advanced**, then continue). In step 2, press **Exchange authorization code for tokens** and
+   copy the **refresh token**.
+5. On Render, set `MAIL_FROM` to that Gmail address (for example `Chesslytics <you@gmail.com>`; it
+   has to be the account you signed in with), `PUBLIC_URL`, `GMAIL_CLIENT_ID`,
+   `GMAIL_CLIENT_SECRET` and `GMAIL_REFRESH_TOKEN`, then redeploy.
+
+Google revokes the refresh token if you change that account's password, remove the app's access, or
+leave it unused for six months. If sending stops working, repeat step 4 and replace
+`GMAIL_REFRESH_TOKEN`. The names of buttons in Google's console change from time to time.
+
+**Brevo, Mailjet or SMTP2GO.** Create an account, verify one sender address, create an API key, and
+set the variables from the table. **Resend** delivers to other people only after you verify a
+domain you own.
+
+Reset emails can go to any recipient, including Gmail addresses; the settings above decide where
+mail is sent *from*. If `MAIL_FROM` is a Gmail address but the mail is sent through a provider
+other than Gmail itself, some mailbox providers may file it as spam, because it does not come from
+Google's servers. Sending through the Gmail API above avoids that.
 
 On Render, add the variables under **Environment**, redeploy, then sign in as the administrator,
 add and confirm your own address on **Account**, and press **Send a test email** on the Admin
-console.
+console. Email is optional: recovery codes let people reset a forgotten password without it.
 
 ## Using the application
 
@@ -384,7 +416,9 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 | `MAX_BACKUP_MB` | `32` | Largest backup file a user may restore. |
 | `PUBLIC_URL` | none | Address people use in the browser, no trailing slash. Needed for links in emails. |
 | `MAIL_FROM` | none | Sender address, for example `Chesslytics <you@example.com>`. `SMTP_FROM` is accepted as an older name. |
-| `MAIL_PROVIDER`, `BREVO_API_KEY`, `RESEND_API_KEY` | detected | How to send. Provide a Brevo or Resend API key to send over HTTPS. |
+| `MAIL_PROVIDER` | detected | `gmail`, `brevo`, `resend`, `mailjet`, `smtp2go` or `smtp`. |
+| `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | none | Send through your own Gmail over HTTPS (see Email above). |
+| `BREVO_API_KEY`, `RESEND_API_KEY`, `MAILJET_API_KEY`, `MAILJET_SECRET_KEY`, `SMTP2GO_API_KEY` | none | Send through that provider's HTTPS API. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD` | none, `587`, `starttls` | Mail server for the SMTP route. `SMTP_SECURITY` is `starttls`, `ssl` or `none`. |
 
 Email features turn on when `PUBLIC_URL`, `MAIL_FROM` and one sending method are all set.

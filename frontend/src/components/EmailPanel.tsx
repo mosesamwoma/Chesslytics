@@ -7,8 +7,11 @@ import ErrorNotice from './ErrorNotice.tsx'
 
 const PROVIDER_NAMES: Record<string, string> = {
   smtp: 'SMTP server',
+  gmail: 'Gmail (HTTPS API)',
   brevo: 'Brevo (HTTPS API)',
   resend: 'Resend (HTTPS API)',
+  mailjet: 'Mailjet (HTTPS API)',
+  smtp2go: 'SMTP2GO (HTTPS API)',
 }
 
 export default function EmailPanel() {
@@ -62,7 +65,7 @@ export default function EmailPanel() {
         <div className="notice error" style={{ marginTop: 12 }}>
           Password reset by email is hidden until these settings exist on the server:{' '}
           <strong>{data.missing.join(', ')}</strong>. Set them in your hosting dashboard and
-          redeploy. The README explains the free Brevo setup step by step.
+          redeploy. The README explains the free Gmail setup step by step.
         </div>
       )}
       {data.enabled ? (

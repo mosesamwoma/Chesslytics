@@ -29,7 +29,19 @@ services:
         sync: false
       - key: MAIL_FROM
         sync: false
+      - key: GMAIL_CLIENT_ID
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
+        sync: false
       - key: BREVO_API_KEY
+        sync: false
+      - key: MAILJET_API_KEY
+        sync: false
+      - key: MAILJET_SECRET_KEY
+        sync: false
+      - key: SMTP2GO_API_KEY
         sync: false
       - key: RESEND_API_KEY
         sync: false

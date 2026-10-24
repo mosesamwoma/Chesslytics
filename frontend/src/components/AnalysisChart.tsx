@@ -21,8 +21,8 @@ interface Marker {
   point: Point
 }
 
-const WIDTH = 760
-const HEIGHT = 280
+const WIDTH = 560
+const HEIGHT = 260
 const PAD = { top: 14, right: 18, bottom: 36, left: 44 }
 const PLOT_W = WIDTH - PAD.left - PAD.right
 const PLOT_H = HEIGHT - PAD.top - PAD.bottom

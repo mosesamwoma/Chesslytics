@@ -27,6 +27,14 @@ services:
         value: json
       - key: PUBLIC_URL
         sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_PROVIDER
+        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT

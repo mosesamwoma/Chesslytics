@@ -48,80 +48,81 @@ export default function Login() {
 
   return (
     <form className="card login" onSubmit={submit}>
-        <h1>Chesslytics</h1>
-        <p className="subtitle">
-          {creating ? 'Create your account.' : 'Sign in to continue.'}
-        </p>
+      <h1>{creating ? 'Create your account' : 'Welcome back'}</h1>
+      <p className="subtitle">
+        {creating ? 'It takes a few seconds.' : 'Sign in to see your games and puzzles.'}
+      </p>
+      <div className="field">
+        <label htmlFor="username">Username</label>
+        <input
+          id="username"
+          type="text"
+          autoComplete="username"
+          autoFocus
+          required
+          maxLength={64}
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          autoComplete={creating ? 'new-password' : 'current-password'}
+          required
+          minLength={creating ? info.min_password_length : undefined}
+          maxLength={128}
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+      </div>
+      {creating ? (
         <div className="field">
-          <label htmlFor="username">Username</label>
+          <label htmlFor="confirm">Repeat password</label>
           <input
-            id="username"
-            type="text"
-            autoComplete="username"
-            autoFocus
-            required
-            maxLength={64}
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
+            id="confirm"
             type="password"
-            autoComplete={creating ? 'new-password' : 'current-password'}
+            autoComplete="new-password"
             required
-            minLength={creating ? info.min_password_length : undefined}
             maxLength={128}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            value={confirm}
+            onChange={(event) => setConfirm(event.target.value)}
           />
+          <span className="muted">
+            At least {info.min_password_length} characters. A short passphrase of unrelated words
+            works well.
+          </span>
         </div>
-        {creating ? (
-          <div className="field">
-            <label htmlFor="confirm">Repeat password</label>
-            <input
-              id="confirm"
-              type="password"
-              autoComplete="new-password"
-              required
-              maxLength={128}
-              value={confirm}
-              onChange={(event) => setConfirm(event.target.value)}
-            />
-            <span className="muted">
-              At least {info.min_password_length} characters. A short passphrase of unrelated
-              words works well.
-            </span>
-          </div>
-        ) : null}
-        <ErrorNotice error={error} />
-        <button type="submit" className="button primary" disabled={busy || gate.blocked}>
-          {busy ? 'Please wait…' : creating ? 'Create account' : 'Sign in'}
-        </button>
-        {!creating ? (
-          info.email_enabled ? (
-            <p className="muted">
-              <Link to="/forgot-password">Forgot your password?</Link>
-            </p>
-          ) : (
-            <p className="muted">
-              Forgot your password? Ask the administrator for a reset link.
-            </p>
-          )
-        ) : null}
-        {creating ? (
-          <button type="button" className="button" onClick={() => switchMode('login')}>
-            I already have an account
-          </button>
-        ) : info.registration_enabled ? (
-          <button type="button" className="button" onClick={() => switchMode('register')}>
-            Create an account
-          </button>
+      ) : null}
+      <ErrorNotice error={error} />
+      <button type="submit" className="button primary" disabled={busy || gate.blocked}>
+        {busy ? 'Please wait…' : creating ? 'Create account' : 'Sign in'}
+      </button>
+      {!creating ? (
+        info.email_enabled ? (
+          <p className="muted">
+            <Link to="/forgot-password">Forgot your password?</Link>
+          </p>
         ) : (
-          <p className="muted">Registration is currently closed.</p>
-        )}
+          <p className="muted">
+            Forgot your password? Password reset by email is not set up on this server, so ask the
+            administrator for a one-time reset link.
+          </p>
+        )
+      ) : null}
+      {creating ? (
+        <button type="button" className="button" onClick={() => switchMode('login')}>
+          I already have an account
+        </button>
+      ) : info.registration_enabled ? (
+        <button type="button" className="button" onClick={() => switchMode('register')}>
+          Create an account
+        </button>
+      ) : (
+        <p className="muted">Registration is currently closed.</p>
+      )}
     </form>
   )
 }

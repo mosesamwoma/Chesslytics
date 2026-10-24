@@ -50,14 +50,37 @@ export default function App() {
 
   if (status === 'anonymous') {
     return (
-      <main className="main">
-        <Routes>
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/verify-email" element={<VerifyEmail />} />
-          <Route path="*" element={<Login />} />
-        </Routes>
-      </main>
+      <div className="auth-shell">
+        <aside className="auth-brand">
+          <div className="auth-logo">
+            <span className="nav-logo" aria-hidden="true">
+              &#9822;
+            </span>
+            <span>Chesslytics</span>
+          </div>
+          <div>
+            <h2>Learn from the mistakes you keep repeating.</h2>
+            <p>
+              Stockfish reviews your games, finds the patterns behind your losses, and turns them
+              into puzzles you can practise.
+            </p>
+            <ul className="auth-points">
+              <li>See which mistake types cost you the most</li>
+              <li>Replay your own blunders as training puzzles</li>
+              <li>Track your accuracy and progress week by week</li>
+            </ul>
+          </div>
+          <div className="auth-foot">Import from Chess.com or Lichess, or upload a PGN.</div>
+        </aside>
+        <main className="auth-panel">
+          <Routes>
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="*" element={<Login />} />
+          </Routes>
+        </main>
+      </div>
     )
   }
 

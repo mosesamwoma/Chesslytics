@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import EmailPanel from '../components/EmailPanel.tsx'
 import ErrorNotice from '../components/ErrorNotice.tsx'
 import Modal from '../components/Modal.tsx'
 import StatTile from '../components/StatTile.tsx'
@@ -354,6 +355,8 @@ export default function Admin() {
           />
         </div>
       ) : null}
+
+      <EmailPanel />
 
       <div className="card" style={{ marginTop: 16 }}>
         <form

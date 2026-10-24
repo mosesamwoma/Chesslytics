@@ -162,7 +162,7 @@ Back up the `postgres-data` volume, for example with
 | `SECRET_KEY` | generated automatically by the blueprint |
 | `TRUSTED_PROXY_HOPS` | `1` (set by the blueprint; see the note below) |
 | `PUBLIC_URL` | optional: your Render address, for example `https://chesslytics.onrender.com` |
-| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | optional: a mail server, to enable password reset by email |
+| `MAIL_FROM`, `BREVO_API_KEY` | optional: send email over HTTPS with Brevo, to enable password reset by email (see Email below) |
 | `SENTRY_DSN` | optional: a Sentry project address |
 
 The blueprint asks for each optional value; leave the ones you do not need empty.
@@ -219,10 +219,28 @@ sees or sets the password). If you configure email (see below), users with a con
 also reset their own password from the sign-in page. Administrators cannot reset their own password
 from the Admin page; they use **Account**, or `python -m app.manage reset-password`.
 
-**Email (optional).** Set `PUBLIC_URL` and the `SMTP_*` variables. Users add an address on the
-**Account** page, receive a confirmation link, and only a confirmed address can be used for
-password reset. Each confirmed address belongs to one account. Without these settings the email
-features are hidden and everything else works.
+**Email (optional).** Users add an address on the **Account** page, receive a confirmation link,
+and only a confirmed address can be used for password reset. Each confirmed address belongs to one
+account. Until email is configured, the sign-in page says that reset by email is not set up and
+everything else works. The **Admin console** has an **Email** card that shows whether email is on,
+lists exactly which settings are missing, and can send a test message to your own address.
+
+Email needs three things: `PUBLIC_URL`, `MAIL_FROM`, and one way to send.
+
+- **Sending over HTTPS (use this on Render's free plan).** Free Render services block outgoing
+  SMTP ports, so use a provider with an HTTPS API. The free tier of **Brevo** works without owning
+  a domain: create an account, verify one sender address under *Senders, domains and dedicated
+  IPs*, create an API key under *SMTP and API*, then set `BREVO_API_KEY` to the key and
+  `MAIL_FROM` to the verified address (for example `Chesslytics <you@gmail.com>`). **Resend** is
+  also supported with `RESEND_API_KEY`, but it only delivers to other people once you verify a
+  domain you own. Set `MAIL_PROVIDER` to `brevo`, `resend` or `smtp` only if you set more than one
+  key; otherwise the provider is detected from whichever key exists.
+- **Sending over SMTP (your own server or a paid host).** Set `SMTP_HOST`, `SMTP_PORT`,
+  `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, and `MAIL_FROM` (or the older `SMTP_FROM`).
+
+On Render, add the variables under **Environment**, redeploy, then sign in as the administrator,
+add and confirm your own address on **Account**, and press **Send a test email** on the Admin
+console.
 
 ## Using the application
 
@@ -294,6 +312,7 @@ cookie. Every `POST`, `PATCH` and `DELETE` needs the `X-CSRF-Protection: 1` head
 | `GET` / `DELETE` | `/api/games`, `/api/games/{id}` | Library. `GET /api/games` accepts `q`, `result`, `color`, `analyzed`, `opening`, `tag`, `sort` |
 | `PATCH` | `/api/games/{id}` | Set `notes` and `tags` |
 | `GET` | `/api/games/tags`, `/api/games/{id}/pgn` | Your tags with counts; the stored PGN |
+| `GET` / `POST` | `/api/admin/email`, `/api/admin/email/test` | Email status and a test message (administrators) |
 | `POST` | `/api/analysis/sample` | Import three sample games and analyse them |
 | `GET` | `/api/analysis/jobs/{id}/stream` | Live job progress (server-sent events) |
 | `POST` | `/api/analysis/upload` | Store games and start an analysis job |
@@ -341,7 +360,11 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` to expose `/docs
 | `COACH_DAILY_LIMIT` | `10` | Coach reports per user per day. |
 | `MAX_BACKUP_MB` | `32` | Largest backup file a user may restore. |
 | `PUBLIC_URL` | none | Address people use in the browser, no trailing slash. Needed for links in emails. |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | none, `587`, `starttls` | Mail server. `SMTP_SECURITY` is `starttls`, `ssl` or `none`. Email features turn on when `PUBLIC_URL`, `SMTP_HOST` and `SMTP_FROM` are all set. |
+| `MAIL_FROM` | none | Sender address, for example `Chesslytics <you@example.com>`. `SMTP_FROM` is accepted as an older name. |
+| `MAIL_PROVIDER`, `BREVO_API_KEY`, `RESEND_API_KEY` | detected | How to send. Provide a Brevo or Resend API key to send over HTTPS. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD` | none, `587`, `starttls` | Mail server for the SMTP route. `SMTP_SECURITY` is `starttls`, `ssl` or `none`. |
+
+Email features turn on when `PUBLIC_URL`, `MAIL_FROM` and one sending method are all set.
 | `LOG_FORMAT` | `text` | `json` for log services. Every response carries an `X-Request-ID`, and every log line includes it. |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE` | none, `production`, `0` | Optional error tracking. Cookies, passwords, request bodies and query strings are never sent. |
 | `PROFILES_KEPT_PER_USER`, `JOB_RETENTION_DAYS` | `5`, `14` | History kept. |

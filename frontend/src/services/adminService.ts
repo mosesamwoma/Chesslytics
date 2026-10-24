@@ -1,8 +1,23 @@
-import type { AdminStats, AdminUser, AdminUsersPage, AuditEvent, ResetLink } from '../types.ts'
+import type {
+  AdminStats,
+  AdminUser,
+  AdminUsersPage,
+  AuditEvent,
+  EmailStatus,
+  ResetLink,
+} from '../types.ts'
 import { del, get, patch, post } from './api.ts'
 
 export function getStats(): Promise<AdminStats> {
   return get<AdminStats>('/api/admin/stats')
+}
+
+export function getEmailStatus(): Promise<EmailStatus> {
+  return get<EmailStatus>('/api/admin/email')
+}
+
+export function sendTestEmail(): Promise<{ sent_to: string }> {
+  return post<{ sent_to: string }>('/api/admin/email/test', {})
 }
 
 export function listUsers({

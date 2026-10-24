@@ -194,8 +194,50 @@ def smtp_security() -> str:
     return value if value in ("starttls", "ssl", "none") else "starttls"
 
 
+MAIL_PROVIDERS = ("smtp", "brevo", "resend")
+
+
+def mail_from() -> str:
+    return env_first("MAIL_FROM", "SMTP_FROM")
+
+
+def brevo_api_key() -> str:
+    return env_str("BREVO_API_KEY")
+
+
+def resend_api_key() -> str:
+    return env_str("RESEND_API_KEY")
+
+
+def mail_provider() -> str:
+    chosen = env_str("MAIL_PROVIDER").lower()
+    if chosen in MAIL_PROVIDERS:
+        return chosen
+    if brevo_api_key():
+        return "brevo"
+    if resend_api_key():
+        return "resend"
+    return "smtp"
+
+
+def email_missing() -> list[str]:
+    missing: list[str] = []
+    if not public_url():
+        missing.append("PUBLIC_URL")
+    if not mail_from():
+        missing.append("MAIL_FROM")
+    provider = mail_provider()
+    if provider == "smtp" and not smtp_host():
+        missing.append("SMTP_HOST (or BREVO_API_KEY / RESEND_API_KEY)")
+    if provider == "brevo" and not brevo_api_key():
+        missing.append("BREVO_API_KEY")
+    if provider == "resend" and not resend_api_key():
+        missing.append("RESEND_API_KEY")
+    return missing
+
+
 def email_enabled() -> bool:
-    return bool(smtp_host() and smtp_from() and public_url())
+    return not email_missing()
 
 
 def daily_puzzle_goal() -> int:

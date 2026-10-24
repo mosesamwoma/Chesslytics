@@ -20,6 +20,39 @@ function storedTheme(): string | null {
   }
 }
 
+function ThemeIcon({ theme }: { theme: string }) {
+  if (theme === 'dark') {
+    return (
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z" fill="currentColor" />
+      </svg>
+    )
+  }
+  if (theme === 'light') {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        width="18"
+        height="18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="4" fill="currentColor" />
+        <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" />
+      </svg>
+    )
+  }
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" />
+    </svg>
+  )
+}
+
 export default function NavBar() {
   const [theme, setTheme] = useState(() => storedTheme() || 'system')
   const { status, user, logout } = useAuth()
@@ -37,10 +70,16 @@ export default function NavBar() {
   }, [theme])
 
   const next = theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark'
+  const initial = (user?.username || '?').slice(0, 1)
 
   return (
     <nav className="nav">
-      <span className="nav-brand">Chesslytics</span>
+      <NavLink to="/" end className="nav-brand">
+        <span className="nav-logo" aria-hidden="true">
+          &#9822;
+        </span>
+        <span>Chesslytics</span>
+      </NavLink>
       <div className="nav-links">
         {LINKS.map((link) => (
           <NavLink
@@ -56,21 +95,32 @@ export default function NavBar() {
       <span className="nav-spacer" />
       <button
         type="button"
-        className="button"
+        className="icon-button"
         onClick={() => setTheme(next)}
-        title="Switch colour theme"
+        title={`Colour theme: ${theme}. Click to switch.`}
+        aria-label={`Colour theme: ${theme}. Click to switch.`}
       >
-        Theme: {theme}
+        <ThemeIcon theme={theme} />
       </button>
       {status === 'authenticated' ? (
         <>
           {user?.is_admin ? (
-            <NavLink to="/admin" className="button">
-              Admin
+            <NavLink
+              to="/admin"
+              className={({ isActive }) => (isActive ? 'nav-chip active' : 'nav-chip')}
+            >
+              Admin console
             </NavLink>
           ) : null}
-          <NavLink to="/account" className="button" title="Account settings">
-            {user?.username}
+          <NavLink
+            to="/account"
+            className={({ isActive }) => (isActive ? 'user-pill active' : 'user-pill')}
+            title="Account settings"
+          >
+            <span className="avatar" aria-hidden="true">
+              {initial}
+            </span>
+            <span>{user?.username}</span>
           </NavLink>
           <button type="button" className="button" onClick={logout}>
             Sign out

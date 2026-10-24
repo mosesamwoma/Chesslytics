@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AnalysisChart from '../components/AnalysisChart.tsx'
 import ChessBoard, { sourceFromUci, squareFromUci } from '../components/ChessBoard.tsx'
@@ -66,6 +66,17 @@ export default function GameAnalysis() {
     ? moves[moves.length - 1].fen_after || START_FEN
     : current?.fen_before || START_FEN
   const selected = atEnd ? undefined : mistakePlies.get(ply)
+
+  const moveRows = useMemo(() => {
+    const rows = new Map<number, { number: number; white?: Move; black?: Move }>()
+    moves.forEach((move) => {
+      const row = rows.get(move.move_number) || { number: move.move_number }
+      if (move.color === 'white') row.white = move
+      else row.black = move
+      rows.set(move.move_number, row)
+    })
+    return [...rows.values()].sort((a, b) => a.number - b.number)
+  }, [moves])
 
   const arrows: BoardArrow[] = useMemo(() => {
     if (!showArrows || atEnd || !current) return []
@@ -181,141 +192,148 @@ export default function GameAnalysis() {
       <ErrorNotice error={error || runner.error} style={{ marginBottom: 16 }} />
 
       {moves.length ? (
-        <>
-          <div className="row" style={{ marginBottom: 12 }}>
-            <span className="secondary">Win probability for</span>
-            <button
-              type="button"
-              className={perspective === 'white' ? 'button primary' : 'button'}
-              onClick={() => setPerspective('white')}
-            >
-              White
-            </button>
-            <button
-              type="button"
-              className={perspective === 'black' ? 'button primary' : 'button'}
-              onClick={() => setPerspective('black')}
-            >
-              Black
-            </button>
-          </div>
-
-          <AnalysisChart sequence={moves} mistakes={mistakes} perspective={perspective} />
-
-          <div className="split" style={{ marginTop: 16 }}>
-            <div className="card">
-              <div className="board-wrap">
-                <ChessBoard
-                  fen={fen}
-                  highlight={[squareFromUci(current?.uci)]}
-                  arrows={arrows}
-                />
-                <div className="board-controls">
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => setPly((value) => Math.max(1, value - 1))}
-                    disabled={ply <= 1}
-                  >
-                    &larr;
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => setPly((value) => Math.min(lastPly + 1, value + 1))}
-                    disabled={ply >= lastPly + 1}
-                  >
-                    &rarr;
-                  </button>
-                  <span>
-                    {atEnd
-                      ? 'Final position'
-                      : current
-                        ? `Move ${current.move_number}${
-                            current.color === 'white' ? '.' : '...'
-                          } ${current.san || '—'}`
-                        : 'Starting position'}
-                  </span>
-                  {selected ? <span className="badge">mistake here</span> : null}
-                </div>
-
-                <div className="row">
-                  <label className="row">
-                    <input
-                      type="checkbox"
-                      checked={showArrows}
-                      onChange={(event) => setShowArrows(event.target.checked)}
-                    />
-                    <span>Show best move (green) and played move (red)</span>
-                  </label>
-                </div>
-                <div className="row">
-                  <button type="button" className="button" onClick={() => fenCopy.copy(fen)}>
-                    {fenCopy.copied ? 'FEN copied' : fenCopy.failed ? 'Copy failed' : 'Copy FEN'}
-                  </button>
-                  <button type="button" className="button" onClick={copyPgn}>
-                    {pgnCopy.copied ? 'PGN copied' : pgnCopy.failed ? 'Copy failed' : 'Copy PGN'}
-                  </button>
-                </div>
-                <ErrorNotice error={copyError} />
-
-                <div
-                  className="list"
-                  style={{ maxHeight: 220, overflowY: 'auto', fontSize: 13 }}
+        <div className="split">
+          <div className="card">
+            <div className="board-wrap">
+              <ChessBoard
+                fen={fen}
+                highlight={[squareFromUci(current?.uci)]}
+                arrows={arrows}
+              />
+              <div className="board-controls">
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => setPly((value) => Math.max(1, value - 1))}
+                  disabled={ply <= 1}
+                  aria-label="Previous move"
                 >
-                  {moves.map((move) => (
-                    <button
-                      key={move.ply}
-                      type="button"
-                      className={move.ply === ply ? 'button primary' : 'button'}
-                      style={{ justifyContent: 'flex-start', textAlign: 'left' }}
-                      onClick={() => setPly(move.ply)}
-                    >
-                      {move.move_number}
-                      {move.color === 'white' ? '.' : '...'} {move.san || '—'}
-                      {mistakePlies.has(move.ply) ? ' ●' : ''}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    className={atEnd ? 'button primary' : 'button'}
-                    style={{ justifyContent: 'flex-start', textAlign: 'left' }}
-                    onClick={() => setPly(lastPly + 1)}
-                  >
-                    Final position
-                  </button>
-                </div>
+                  &larr;
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => setPly((value) => Math.min(lastPly + 1, value + 1))}
+                  disabled={ply >= lastPly + 1}
+                  aria-label="Next move"
+                >
+                  &rarr;
+                </button>
+                <span>
+                  {atEnd
+                    ? 'Final position'
+                    : current
+                      ? `Move ${current.move_number}${
+                          current.color === 'white' ? '.' : '...'
+                        } ${current.san || '—'}`
+                      : 'Starting position'}
+                </span>
+                {selected ? <span className="badge">mistake here</span> : null}
               </div>
-            </div>
 
-            <div className="list">
-              <div className="card">
-                <h2>Mistakes in this game</h2>
-                <p className="subtitle">
-                  {mistakes.length
-                    ? `${mistakes.length} recorded above the current thresholds.`
-                    : 'None recorded above the current thresholds.'}
-                </p>
-              </div>
-              {mistakes.map((mistake) => (
-                <MistakeCard
-                  key={mistake.id || mistake.ply}
-                  mistake={mistake}
-                  selected={mistake.ply === ply}
-                  onSelect={(item: Mistake) => setPly(item.ply === ply ? 1 : item.ply)}
+              <label className="row">
+                <input
+                  type="checkbox"
+                  checked={showArrows}
+                  onChange={(event) => setShowArrows(event.target.checked)}
                 />
-              ))}
+                <span>Show best move (green) and played move (red)</span>
+              </label>
+              <div className="row">
+                <button type="button" className="button" onClick={() => fenCopy.copy(fen)}>
+                  {fenCopy.copied ? 'FEN copied' : fenCopy.failed ? 'Copy failed' : 'Copy FEN'}
+                </button>
+                <button type="button" className="button" onClick={copyPgn}>
+                  {pgnCopy.copied ? 'PGN copied' : pgnCopy.failed ? 'Copy failed' : 'Copy PGN'}
+                </button>
+              </div>
+              <ErrorNotice error={copyError} />
+
+              <div className="moves-grid">
+                {moveRows.map((row) => (
+                  <Fragment key={row.number}>
+                    <span className="move-no">{row.number}.</span>
+                    {([row.white, row.black] as (Move | undefined)[]).map((move, index) =>
+                      move ? (
+                        <button
+                          key={move.ply}
+                          type="button"
+                          className={[
+                            'move-chip',
+                            move.ply === ply ? 'current' : '',
+                            mistakePlies.has(move.ply) ? 'flagged' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => setPly(move.ply)}
+                        >
+                          <span>{move.san || '—'}</span>
+                          <i className="chip-dot" title="mistake" />
+                        </button>
+                      ) : (
+                        <span key={`gap-${row.number}-${index}`} />
+                      ),
+                    )}
+                  </Fragment>
+                ))}
+                <button
+                  type="button"
+                  className={atEnd ? 'move-chip move-final current' : 'move-chip move-final'}
+                  onClick={() => setPly(lastPly + 1)}
+                >
+                  Final position
+                </button>
+              </div>
             </div>
           </div>
 
-          <GameNotes
-            key={data.id}
-            gameId={data.id}
-            notes={data.notes}
-            tags={data.tags}
-            onSaved={saved}
-          />
-        </>
+          <div className="stack">
+            <div className="row">
+              <span className="secondary">Win probability for</span>
+              <button
+                type="button"
+                className={perspective === 'white' ? 'button primary' : 'button'}
+                onClick={() => setPerspective('white')}
+              >
+                White
+              </button>
+              <button
+                type="button"
+                className={perspective === 'black' ? 'button primary' : 'button'}
+                onClick={() => setPerspective('black')}
+              >
+                Black
+              </button>
+            </div>
+
+            <AnalysisChart sequence={moves} mistakes={mistakes} perspective={perspective} />
+
+            <div className="card">
+              <h2>Mistakes in this game</h2>
+              <p className="subtitle" style={{ marginBottom: 0 }}>
+                {mistakes.length
+                  ? `${mistakes.length} recorded above the current thresholds.`
+                  : 'None recorded above the current thresholds.'}
+              </p>
+            </div>
+            {mistakes.map((mistake) => (
+              <MistakeCard
+                key={mistake.id || mistake.ply}
+                mistake={mistake}
+                selected={mistake.ply === ply}
+                onSelect={(item: Mistake) => setPly(item.ply === ply ? 1 : item.ply)}
+              />
+            ))}
+
+            <GameNotes
+              key={data.id}
+              gameId={data.id}
+              notes={data.notes}
+              tags={data.tags}
+              onSaved={saved}
+            />
+          </div>
+        </div>
       ) : (
         <div className="notice">
           This game is stored but has no evaluated moves yet. Run the analysis to fill in the chart,

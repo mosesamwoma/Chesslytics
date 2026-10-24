@@ -490,6 +490,14 @@ export interface TimeControlReport {
   time_controls: TimeControlRow[]
 }
 
+export interface EmailStatus {
+  enabled: boolean
+  provider: string
+  from: string | null
+  public_url: string | null
+  missing: string[]
+}
+
 export interface AdminUser {
   id: number
   username: string

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import auth, security
+from app import auth, mailer, security, settings
 from app.database.database import get_db
 from app.database.models import User
 from app.services import token_service, user_service
@@ -38,6 +38,48 @@ def _would_remove_last_admin(db: Session, target: User) -> bool:
         and bool(target.is_active)
         and user_service.count_active_admins(db) <= 1
     )
+
+
+@router.get("/email")
+def email_status() -> dict:
+    missing = settings.email_missing()
+    return {
+        "enabled": not missing,
+        "provider": settings.mail_provider(),
+        "from": settings.mail_from() or None,
+        "public_url": settings.public_url() or None,
+        "missing": missing,
+    }
+
+
+@router.post("/email/test")
+def email_test(user: User = Depends(auth.current_user)) -> dict:
+    wait = security.limiter.consume(f"mailtest:{user.id}", 5, 3600)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"too many test emails; try again in {wait} seconds",
+            headers={"Retry-After": str(wait)},
+        )
+    if not settings.email_enabled():
+        raise HTTPException(
+            status_code=400,
+            detail="email is not set up: missing " + ", ".join(settings.email_missing()),
+        )
+    if not user.email:
+        raise HTTPException(
+            status_code=400,
+            detail="add an email address to your own account first (Account page)",
+        )
+    try:
+        mailer.deliver(
+            user.email,
+            "Chesslytics test email",
+            "This is a test message from your Chesslytics server. Email is working.\n",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"sending failed: {exc}") from exc
+    return {"sent_to": user.email}
 
 
 @router.get("/stats")

@@ -58,7 +58,7 @@ export default function GameNotes({ gameId, notes, tags, onSaved }: GameNotesPro
   }
 
   return (
-    <div className="card" style={{ marginTop: 16 }}>
+    <div className="card">
       <h2>Notes and tags</h2>
       <div className="field">
         <label htmlFor="game-notes">Notes</label>

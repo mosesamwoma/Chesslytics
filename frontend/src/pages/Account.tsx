@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useAuth } from '../auth/AuthContext.tsx'
 import ErrorNotice from '../components/ErrorNotice.tsx'
+import RecoveryCode from '../components/RecoveryCode.tsx'
 import Modal from '../components/Modal.tsx'
 import { useRetryAfter } from '../hooks/useRetryAfter.ts'
 import {
@@ -9,6 +10,7 @@ import {
   removeEmail,
   restoreBackup,
   resendVerification,
+  newRecoveryCode,
   setDigest,
   setEmail,
 } from '../services/accountService.ts'
@@ -35,7 +37,7 @@ interface EmailDialogProps {
   withAddress?: boolean
 }
 
-type DialogState = { type: 'delete' | 'email' | 'remove-email' } | null
+type DialogState = { type: 'delete' | 'email' | 'remove-email' | 'recovery' } | null
 
 function DeleteDialog({ busy, error, onConfirm, onCancel }: DeleteDialogProps) {
   const [password, setPassword] = useState('')
@@ -151,6 +153,7 @@ export default function Account() {
   const [busy, setBusy] = useState(false)
   const [dialog, setDialog] = useState<DialogState>(null)
   const [dialogError, setDialogError] = useState<Problem>(null)
+  const [freshCode, setFreshCode] = useState<string | null>(null)
   const [emailMessage, setEmailMessage] = useState<string | null>(null)
   const [emailError, setEmailError] = useState<Problem>(null)
   const [restoreMessage, setRestoreMessage] = useState<string | null>(null)
@@ -222,6 +225,21 @@ export default function Account() {
       setUser(result.user)
       setDialog(null)
       setEmailMessage('Your email address was removed.')
+    } catch (err) {
+      setDialogError(toProblem(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const makeRecoveryCode = async (_address: string, password: string) => {
+    setBusy(true)
+    setDialogError(null)
+    try {
+      const result = await newRecoveryCode(password)
+      if (result.user) setUser(result.user)
+      setDialog(null)
+      setFreshCode(result.recovery_code)
     } catch (err) {
       setDialogError(toProblem(err))
     } finally {
@@ -354,6 +372,26 @@ export default function Account() {
       </form>
 
       <div className="card" style={{ marginTop: 16 }}>
+        <h2>Recovery code</h2>
+        <p className="subtitle">
+          {user?.has_recovery_code
+            ? 'You have a recovery code. If you forget your password, enter it on the reset page to set a new one yourself. Creating a new code replaces the old one.'
+            : 'You do not have a recovery code yet. Create one so you can reset a forgotten password without email or an administrator.'}
+        </p>
+        <button
+          type="button"
+          className="button"
+          disabled={busy}
+          onClick={() => {
+            setDialogError(null)
+            setDialog({ type: 'recovery' })
+          }}
+        >
+          {user?.has_recovery_code ? 'Create a new recovery code' : 'Create a recovery code'}
+        </button>
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
         <h2>Email</h2>
         {info.email_enabled ? (
           <>
@@ -482,6 +520,28 @@ export default function Account() {
         </div>
       </div>
 
+      {dialog && dialog.type === 'recovery' ? (
+        <EmailDialog
+          title="Create a recovery code"
+          description="Enter your password to create a new recovery code. Your current code, if you have one, stops working."
+          confirmLabel="Create code"
+          busy={busy}
+          error={dialogError}
+          onSubmit={makeRecoveryCode}
+          onCancel={closeDialog}
+        />
+      ) : null}
+      {freshCode ? (
+        <div className="modal-backdrop">
+          <RecoveryCode
+            code={freshCode}
+            heading="Your new recovery code"
+            intro="Save it now. It is shown only once, and your previous code no longer works."
+            continueLabel="Done"
+            onDone={() => setFreshCode(null)}
+          />
+        </div>
+      ) : null}
       {dialog && dialog.type === 'delete' ? (
         <DeleteDialog
           busy={busy}

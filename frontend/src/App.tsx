@@ -3,6 +3,7 @@ import { useAuth } from './auth/AuthContext.tsx'
 import Account from './pages/Account.tsx'
 import Admin from './pages/Admin.tsx'
 import NavBar from './components/NavBar.tsx'
+import RecoveryCode from './components/RecoveryCode.tsx'
 import ChessDNA from './pages/ChessDNA.tsx'
 import Coach from './pages/Coach.tsx'
 import Dashboard from './pages/Dashboard.tsx'
@@ -25,7 +26,7 @@ function NotFound() {
 }
 
 export default function App() {
-  const { status, user, error, retry } = useAuth()
+  const { status, user, error, retry, recoveryCode, dismissRecovery } = useAuth()
 
   if (status === 'loading') {
     return (
@@ -84,10 +85,31 @@ export default function App() {
     )
   }
 
+  if (recoveryCode) {
+    return (
+      <div className="auth-panel" style={{ minHeight: '100vh' }}>
+        <RecoveryCode
+          code={recoveryCode}
+          heading="Save your recovery code"
+          intro="This is the only time it is shown. If you ever forget your password, this code lets you set a new one yourself, without asking anyone."
+          continueLabel="Continue to Chesslytics"
+          onDone={dismissRecovery}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       <NavBar />
       <main className="main">
+        {user && !user.has_recovery_code ? (
+          <div className="notice" style={{ marginBottom: 16 }}>
+            You do not have a recovery code yet. Without one, a forgotten password can only be
+            fixed by email or an administrator.{' '}
+            <Link to="/account">Create a recovery code</Link>
+          </div>
+        ) : null}
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/games" element={<Games />} />

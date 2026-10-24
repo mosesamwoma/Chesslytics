@@ -11,7 +11,7 @@ from app import auth, mailer, security, settings
 from app.api.common import read_upload
 from app.database.database import get_db
 from app.database.models import User
-from app.services import backup_service, token_service, user_service
+from app.services import backup_service, recovery_service, token_service, user_service
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
@@ -164,6 +164,20 @@ async def restore_backup(
     )
     db.commit()
     return result
+
+
+@router.post("/recovery-code")
+def new_recovery_code(
+    payload: PasswordConfirmation,
+    request: Request,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _check_password(user, payload.password)
+    code = recovery_service.issue(db, user)
+    user_service.audit(db, "user.recovery_code", actor=user, ip=security.client_ip(request))
+    db.commit()
+    return {"recovery_code": code, "user": user_service.user_payload(user, private=True)}
 
 
 @router.put("/digest")

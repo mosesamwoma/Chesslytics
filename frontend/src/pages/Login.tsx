@@ -13,6 +13,7 @@ export default function Login() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [email, setEmail] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<Problem>(null)
   const gate = useRetryAfter(error)
@@ -24,6 +25,7 @@ export default function Login() {
     setError(null)
     setPassword('')
     setConfirm('')
+    setEmail('')
   }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -36,7 +38,7 @@ export default function Login() {
     setBusy(true)
     try {
       if (creating) {
-        await register(username.trim(), password)
+        await register(username.trim(), password, email.trim())
       } else {
         await login(username.trim(), password)
       }
@@ -78,6 +80,23 @@ export default function Login() {
           onChange={(event) => setPassword(event.target.value)}
         />
       </div>
+      {creating && info.email_enabled ? (
+        <div className="field">
+          <label htmlFor="email">Email (optional)</label>
+          <input
+            id="email"
+            type="email"
+            autoComplete="email"
+            maxLength={254}
+            placeholder="you@gmail.com"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+          <span className="muted">
+            Lets you reset your password by email. We send a link to confirm it.
+          </span>
+        </div>
+      ) : null}
       {creating ? (
         <div className="field">
           <label htmlFor="confirm">Repeat password</label>
@@ -101,16 +120,9 @@ export default function Login() {
         {busy ? 'Please wait…' : creating ? 'Create account' : 'Sign in'}
       </button>
       {!creating ? (
-        info.email_enabled ? (
-          <p className="muted">
-            <Link to="/forgot-password">Forgot your password?</Link>
-          </p>
-        ) : (
-          <p className="muted">
-            Forgot your password? Password reset by email is not set up on this server, so ask the
-            administrator for a one-time reset link.
-          </p>
-        )
+        <p className="muted">
+          <Link to="/forgot-password">Forgot your password?</Link>
+        </p>
       ) : null}
       {creating ? (
         <button type="button" className="button" onClick={() => switchMode('login')}>

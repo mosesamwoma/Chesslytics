@@ -19,7 +19,7 @@ seeing anyone's games.
 - **Training mode**: every stored mistake becomes a puzzle, graded on winning-chance loss. Spaced repetition brings puzzles you got wrong back at growing intervals. Progress survives re-analysis.
 - **Progress and openings**: weekly charts of average loss and mistakes per 100 moves, and a per-opening report with win rate, average loss and the move where you most often go wrong.
 - **Background analysis**: uploads return immediately; analysis runs in a bounded worker pool with live progress and cancel.
-- **Accounts and administration**: registration, sign-in, password change, optional email confirmation and password reset by email, one-time reset links created by an administrator, account deletion, and an admin console.
+- **Accounts and administration**: registration, sign-in, password change, recovery codes for self-service password reset, optional email confirmation and password reset by email, one-time reset links created by an administrator, account deletion, and an admin console.
 - **Backup and restore**: download everything you own as one JSON file and restore it later.
 - **Operations**: request IDs, optional JSON logs, an analysis history page with retry, and optional Sentry error tracking.
 - **Exports** in JSON, CSV and JSONL, plus a CLI for batch work.
@@ -213,11 +213,23 @@ On platforms without a shell, set `ADMIN_PASSWORD` to a new value together with
 To close sign-ups set `ALLOW_REGISTRATION=false`; create accounts yourself with `app.manage`.
 Sign-up is also limited to 5 accounts per hour per address.
 
-**Forgotten passwords.** An administrator can open **Admin**, choose **Reset link** next to a user
-and send them the one-time link (it works once and expires after one hour; the administrator never
-sees or sets the password). If you configure email (see below), users with a confirmed address can
-also reset their own password from the sign-in page. Administrators cannot reset their own password
-from the Admin page; they use **Account**, or `python -m app.manage reset-password`.
+**Forgotten passwords.** Nobody has to depend on the administrator. There are three routes:
+
+1. **Recovery code (always available, no email needed).** Every new account is shown a recovery
+   code once, at sign-up, and must tick "I have saved my recovery code" before continuing. On the
+   sign-in page, **Forgot your password?** then **Recovery code** takes the username, the code and
+   a new password. The code works once; using it signs the user out everywhere and shows a fresh
+   code. Codes are stored only as a keyed hash, and guessing is rate limited. Accounts created
+   before this feature, including the administrator, see a banner and can create a code on the
+   **Account** page (it asks for the password). Creating a new code replaces the old one.
+2. **Email link.** If email is configured (see below), anyone with a confirmed address can use the
+   **By email** tab. The sign-up form also has an optional email field, so the address can be
+   confirmed from the first minute. Any address works, including Gmail.
+3. **Administrator link.** An administrator can open **Admin**, choose **Reset link** next to a
+   user and send them the one-time link (it works once and expires after one hour; the
+   administrator never sees or sets the password). Administrators cannot reset their own password
+   from the Admin page; they use their recovery code, **Account**, or
+   `python -m app.manage reset-password`.
 
 **Email (optional).** Users add an address on the **Account** page, receive a confirmation link,
 and only a confirmed address can be used for password reset. Each confirmed address belongs to one
@@ -237,6 +249,15 @@ Email needs three things: `PUBLIC_URL`, `MAIL_FROM`, and one way to send.
   key; otherwise the provider is detected from whichever key exists.
 - **Sending over SMTP (your own server or a paid host).** Set `SMTP_HOST`, `SMTP_PORT`,
   `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, and `MAIL_FROM` (or the older `SMTP_FROM`).
+
+Reset emails can go to any recipient, including Gmail addresses; the settings above only decide
+where the mail is sent *from*. If you use a Gmail address as `MAIL_FROM` through Brevo, some
+providers may put the message in spam, because the message does not come from Google's own
+servers. Sending from an address on a domain you own, with the provider's DNS records added,
+avoids that. To send through Gmail itself, use `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`,
+`SMTP_SECURITY=starttls`, your address as `SMTP_USER` and `MAIL_FROM`, and a Google **app
+password** as `SMTP_PASSWORD`; that works on hosts that allow outgoing SMTP, but not on Render's
+free plan.
 
 On Render, add the variables under **Environment**, redeploy, then sign in as the administrator,
 add and confirm your own address on **Account**, and press **Send a test email** on the Admin
@@ -304,7 +325,9 @@ cookie. Every `POST`, `PATCH` and `DELETE` needs the `X-CSRF-Protection: 1` head
 | `POST` | `/api/auth/register`, `/login`, `/logout` | Account creation and sessions |
 | `GET` / `DELETE` | `/api/auth/me` | Current user / delete own account |
 | `POST` | `/api/auth/password` | Change password |
-| `POST` | `/api/auth/forgot`, `/reset`, `/verify-email` | Password reset and email confirmation (public, rate limited; need email configured) |
+| `POST` | `/api/auth/forgot`, `/reset`, `/verify-email` | Password reset by email and email confirmation (public, rate limited; need email configured) |
+| `POST` | `/api/auth/recover` | Set a new password with a username and recovery code (public, rate limited) |
+| `POST` | `/api/account/recovery-code` | Create a new recovery code (needs the password) |
 | `PUT` / `DELETE` / `POST` | `/api/account/email`, `/api/account/email/resend` | Manage your email address |
 | `GET` / `POST` | `/api/account/backup`, `/api/account/backup/restore` | Download or restore a backup |
 | `POST` | `/api/games/upload` | Store games without analysing |

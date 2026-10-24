@@ -1,4 +1,4 @@
-import type { RestoreResult, UserEnvelope } from '../types.ts'
+import type { RecoveryResult, RestoreResult, UserEnvelope } from '../types.ts'
 import { BASE, del, post, postForm, put } from './api.ts'
 
 export function setEmail(email: string, password: string): Promise<UserEnvelope> {
@@ -11,6 +11,10 @@ export function resendVerification(): Promise<unknown> {
 
 export function removeEmail(password: string): Promise<UserEnvelope> {
   return del<UserEnvelope>('/api/account/email', { password })
+}
+
+export function newRecoveryCode(password: string): Promise<RecoveryResult> {
+  return post<RecoveryResult>('/api/account/recovery-code', { password })
 }
 
 export function setDigest(enabled: boolean): Promise<UserEnvelope> {

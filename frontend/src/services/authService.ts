@@ -1,4 +1,4 @@
-import type { AuthInfo, UserEnvelope } from '../types.ts'
+import type { AuthInfo, RegisterResult, UserEnvelope } from '../types.ts'
 import { del, post, request } from './api.ts'
 
 function quietPost<T>(path: string, payload: unknown): Promise<T> {
@@ -22,8 +22,28 @@ export function login(username: string, password: string): Promise<UserEnvelope>
   return quietPost<UserEnvelope>('/api/auth/login', { username, password })
 }
 
-export function register(username: string, password: string): Promise<UserEnvelope> {
-  return quietPost<UserEnvelope>('/api/auth/register', { username, password })
+export function register(
+  username: string,
+  password: string,
+  email?: string,
+): Promise<RegisterResult> {
+  return quietPost<RegisterResult>('/api/auth/register', {
+    username,
+    password,
+    email: email || undefined,
+  })
+}
+
+export function recoverPassword(
+  username: string,
+  recoveryCode: string,
+  newPassword: string,
+): Promise<{ recovered: boolean; recovery_code: string }> {
+  return quietPost<{ recovered: boolean; recovery_code: string }>('/api/auth/recover', {
+    username,
+    recovery_code: recoveryCode,
+    new_password: newPassword,
+  })
 }
 
 export function logout(): Promise<unknown> {

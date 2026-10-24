@@ -75,6 +75,10 @@ class User(Base):
     email_verified_at: Mapped[Optional[datetime]] = mapped_column(
         UTCDateTime(), nullable=True
     )
+    recovery_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    recovery_created_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
     daily_goal: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     digest_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     last_digest_at: Mapped[Optional[datetime]] = mapped_column(

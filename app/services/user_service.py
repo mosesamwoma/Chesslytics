@@ -206,6 +206,7 @@ def user_payload(user: User, private: bool = False) -> dict:
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
         "email_verified": user.email_verified_at is not None,
         "digest_enabled": bool(user.digest_enabled),
+        "has_recovery_code": bool(user.recovery_hash),
     }
     if private:
         payload["email"] = user.email

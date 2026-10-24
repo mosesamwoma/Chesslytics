@@ -26,7 +26,9 @@ export interface AuthValue {
   info: AuthInfo
   error: Problem
   login: (username: string, password: string) => Promise<void>
-  register: (username: string, password: string) => Promise<void>
+  register: (username: string, password: string, email?: string) => Promise<void>
+  recoveryCode: string | null
+  dismissRecovery: () => void
   logout: () => Promise<void>
   endSession: () => void
   refreshUser: () => Promise<User>
@@ -63,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   })
   const [error, setError] = useState<Problem>(null)
   const [attempt, setAttempt] = useState(0)
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -100,10 +103,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('authenticated')
   }, [])
 
-  const register = useCallback(async (username: string, password: string) => {
-    const result = await registerRequest(username, password)
+  const register = useCallback(async (username: string, password: string, email?: string) => {
+    const result = await registerRequest(username, password, email)
+    setRecoveryCode(result.recovery_code)
     setUser(result.user)
     setStatus('authenticated')
+  }, [])
+
+  const dismissRecovery = useCallback(() => {
+    setRecoveryCode(null)
+    setUser((current) => (current ? { ...current, has_recovery_code: true } : current))
   }, [])
 
   const logout = useCallback(async () => {
@@ -133,13 +142,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       error,
       login,
       register,
+      recoveryCode,
+      dismissRecovery,
       logout,
       endSession,
       refreshUser,
       setUser,
       retry,
     }),
-    [status, user, info, error, login, register, logout, endSession, refreshUser, retry],
+    [
+      status,
+      user,
+      info,
+      error,
+      login,
+      register,
+      recoveryCode,
+      dismissRecovery,
+      logout,
+      endSession,
+      refreshUser,
+      retry,
+    ],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

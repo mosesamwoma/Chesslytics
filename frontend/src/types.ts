@@ -17,11 +17,21 @@ export interface User {
   last_login_at: string | null
   email_verified: boolean
   digest_enabled: boolean
+  has_recovery_code: boolean
   email?: string | null
 }
 
 export interface UserEnvelope {
   user: User
+}
+
+export interface RegisterResult extends UserEnvelope {
+  recovery_code: string
+}
+
+export interface RecoveryResult {
+  recovery_code: string
+  user?: User
 }
 
 export interface Game {

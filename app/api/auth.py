@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 from app import auth, mailer, security, settings
 from app.database.database import get_db
 from app.database.models import User, utcnow
-from app.services import token_service, user_service
+from app.services import recovery_service, token_service, user_service
 
 logger = logging.getLogger("chesslytics")
 
@@ -24,6 +25,9 @@ RESET_IP_WINDOW = 3600
 FORGOT_IP_LIMIT = 6
 FORGOT_ADDRESS_LIMIT = 3
 FORGOT_WINDOW = 3600
+RECOVER_IP_LIMIT = 15
+RECOVER_USER_LIMIT = 8
+RECOVER_WINDOW = 3600
 VERIFY_IP_LIMIT = 20
 VERIFY_IP_WINDOW = 3600
 
@@ -36,6 +40,13 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=security.MAX_PASSWORD_LENGTH)
+    email: Optional[str] = Field(default=None, max_length=254)
+
+
+class RecoverRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    recovery_code: str = Field(min_length=1, max_length=64)
+    new_password: str = Field(min_length=1, max_length=security.MAX_PASSWORD_LENGTH)
 
 
 class PasswordChange(BaseModel):
@@ -88,16 +99,37 @@ def register(
     wait = security.limiter.consume(f"register:{ip}", REGISTER_IP_LIMIT, REGISTER_IP_WINDOW)
     if wait:
         raise too_many(wait, "too many accounts created from this address; try again later")
+    address = (payload.email or "").strip()
+    wants_email = bool(address) and settings.email_enabled()
+    if wants_email:
+        problem = mailer.email_error(address)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
+    verification: Optional[tuple[str, str]] = None
     try:
         user = user_service.create_user(db, payload.username, payload.password)
         user.last_login_at = utcnow()
+        recovery_code = recovery_service.issue(db, user)
+        if wants_email:
+            user_service.set_email(db, user, address)
+            raw = token_service.issue(
+                db, user, token_service.KIND_VERIFY_EMAIL, email=user.email_key
+            )
+            verification = mailer.verification_message(
+                f"{settings.public_url()}/verify-email?token={raw}"
+            )
         user_service.audit(db, "user.register", actor=user, target=user.username, ip=ip)
         db.commit()
     except user_service.UserError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if verification is not None and user.email:
+        mailer.send_async(user.email, verification[0], verification[1])
     auth.set_session_cookie(response, request, user)
-    return {"user": user_service.user_payload(user, private=True)}
+    return {
+        "user": user_service.user_payload(user, private=True),
+        "recovery_code": recovery_code,
+    }
 
 
 @router.post("/login")
@@ -173,6 +205,34 @@ def forgot_password(
         subject, body = mailer.reset_message(f"{settings.public_url()}/reset-password?token={raw}")
         mailer.send_async(user.email, subject, body)
     return {"sent": True}
+
+
+@router.post("/recover")
+def recover_password(
+    payload: RecoverRequest, request: Request, db: Session = Depends(get_db)
+) -> dict:
+    ip = security.client_ip(request)
+    wait = security.limiter.consume(f"recover:{ip}", RECOVER_IP_LIMIT, RECOVER_WINDOW)
+    if wait:
+        raise too_many(wait, "too many attempts; try again later")
+    key = security.normalize_username(payload.username.strip())
+    wait = security.limiter.consume(f"recover-user:{key}", RECOVER_USER_LIMIT, RECOVER_WINDOW)
+    if wait:
+        raise too_many(wait, "too many attempts for this account; try again later")
+    user = user_service.get_by_username(db, payload.username.strip())
+    valid = recovery_service.matches(user, payload.recovery_code)
+    if user is None or not valid or not user.is_active:
+        raise HTTPException(
+            status_code=400, detail="the username or recovery code is not correct"
+        )
+    problem = security.password_error(payload.new_password, user.username)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    user_service.change_password(db, user, payload.new_password)
+    new_code = recovery_service.issue(db, user)
+    user_service.audit(db, "auth.password_recovered", actor=user, ip=ip)
+    db.commit()
+    return {"recovered": True, "recovery_code": new_code}
 
 
 @router.post("/reset")

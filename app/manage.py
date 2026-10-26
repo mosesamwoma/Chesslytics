@@ -87,6 +87,66 @@ def send_digests(_args: argparse.Namespace) -> int:
     return 0
 
 
+def retag_command(_args: argparse.Namespace) -> int:
+    from app.services import tactics_service
+
+    init_db()
+    tagged = tactics_service.retag_all()
+    named = tactics_service.fill_openings_all()
+    print(f"analysed the tactics of {tagged} mistake(s) and named {named} opening(s)")
+    return 0
+
+
+def import_puzzles_command(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from app.services import library_service
+
+    init_db()
+    path = Path(args.path)
+    if not path.is_file():
+        print(f"error: no such file: {path}", file=sys.stderr)
+        return 2
+    try:
+        outcome = library_service.import_file(
+            path,
+            limit=args.limit,
+            min_popularity=args.min_popularity,
+            min_rating=args.min_rating,
+            max_rating=args.max_rating,
+            themes=args.theme,
+            progress=lambda added, scanned: print(f"  added {added}, scanned {scanned}", flush=True),
+        )
+    except library_service.LibraryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(
+        f"scanned {outcome['scanned']} rows, added {outcome['added']} puzzle(s), "
+        f"skipped {outcome['skipped']} unusable row(s)"
+    )
+    return 0
+
+
+def evaluate_tactics_command(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from app.chess import evaluation
+    from app.services import library_service
+
+    path = Path(args.path)
+    if not path.is_file():
+        print(f"error: no such file: {path}", file=sys.stderr)
+        return 2
+    try:
+        with library_service.open_text(path) as handle:
+            report = evaluation.evaluate(library_service.parse_rows(handle), limit=args.limit)
+    except library_service.LibraryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(evaluation.format_report(report))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.manage")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -109,6 +169,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = sub.add_parser("list-users", help="list accounts")
     listing.set_defaults(func=list_users)
+
+    retag = sub.add_parser("retag", help="analyse tactics for older mistakes and name unnamed openings")
+    retag.set_defaults(func=retag_command)
+
+    puzzles = sub.add_parser("import-puzzles", help="import puzzles from the Lichess puzzle CSV (.csv or .csv.zst)")
+    puzzles.add_argument("path")
+    puzzles.add_argument("--limit", type=int, default=50000)
+    puzzles.add_argument("--min-popularity", type=int, default=0)
+    puzzles.add_argument("--min-rating", type=int, default=0)
+    puzzles.add_argument("--max-rating", type=int, default=4000)
+    puzzles.add_argument("--theme", action="append", help="only import puzzles with this Lichess theme (repeatable)")
+    puzzles.set_defaults(func=import_puzzles_command)
+
+    evaluate = sub.add_parser("evaluate-tactics", help="measure the tactic detectors against labelled Lichess puzzles")
+    evaluate.add_argument("path")
+    evaluate.add_argument("--limit", type=int, default=5000)
+    evaluate.set_defaults(func=evaluate_tactics_command)
 
     digests = sub.add_parser("send-digests", help="send the weekly digest to everyone who is due")
     digests.set_defaults(func=send_digests)

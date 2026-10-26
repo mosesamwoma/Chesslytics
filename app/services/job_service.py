@@ -243,6 +243,7 @@ def _config_from(params: dict) -> MinerConfig:
         mistake=float(raw.get("mistake", 1.0)),
         blunder=float(raw.get("blunder", 2.0)),
         ignore_decided=bool(raw.get("ignore_decided", True)),
+        rating_aware=bool(raw.get("rating_aware", False)),
     )
 
 

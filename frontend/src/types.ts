@@ -127,12 +127,50 @@ export interface HungPiece {
   name?: string
   piece?: string
   see_pawns?: number | null
+  exchange?: string[]
+}
+
+export interface TacticEntry {
+  kind: string
+  detail: string
+  move: string | null
+  squares: string[]
+}
+
+export interface LineInfo {
+  outcome: string
+  mate_in: number | null
+  gain_cp: number
+  san: string[]
+  themes: string[]
+  squares: string[]
+}
+
+export interface ForcedMate {
+  for: 'mover' | 'opponent'
+  in: number
+  san: string[]
+}
+
+export interface Tactics {
+  heuristic: boolean
+  themes: string[]
+  missed: TacticEntry[]
+  allowed: TacticEntry[]
+  line: LineInfo | null
+  forced_mate: ForcedMate | null
+  exchange: string | null
+  squares: string[]
+  failed?: boolean
 }
 
 export interface MistakeFacts {
   motifs_allowed?: Motif[]
   hung_piece?: HungPiece | null
   best_line?: string[]
+  tactics?: Tactics
+  player_elo?: number | null
+  rating_scale?: number
 }
 
 export interface Mistake {
@@ -228,6 +266,7 @@ export interface AnalysisOptions {
   time_limit?: number
   min_loss?: number
   update_profile?: boolean
+  rating_aware?: boolean
 }
 
 export interface UploadOptions {
@@ -236,6 +275,7 @@ export interface UploadOptions {
   depth?: number
   min_loss?: number
   ignore_decided?: boolean
+  rating_aware?: boolean
 }
 
 export interface UploadSummary {
@@ -383,6 +423,7 @@ export interface Puzzle {
   in_book: boolean | null
   attempts: number
   solved: boolean
+  themes: string[]
   review: Review | null
 }
 
@@ -469,6 +510,7 @@ export interface Solution {
   book_move?: string | null
   category_basis?: string | null
   best_line_san?: string[]
+  facts?: MistakeFacts | null
 }
 
 export interface CoachSection {
@@ -559,4 +601,73 @@ export interface RestoreResult {
   attempts_restored: number
   games_already_present?: number
   games_unreadable?: number
+}
+
+export interface ThemeCount {
+  theme: string
+  count: number
+}
+
+export interface LibraryTheme {
+  theme: string
+  lichess: string
+  available: number
+  mistakes?: number
+}
+
+export interface LibraryStatus {
+  count: number
+  themes: LibraryTheme[]
+  recommended: LibraryTheme[]
+}
+
+export interface LibraryPuzzle {
+  id: number
+  source_id: string
+  rating: number
+  themes: string[]
+  fen: string
+  orientation: Side
+  legal_moves: string[]
+  opponent_uci: string
+  opponent_san: string
+  step: number
+  total: number
+}
+
+export interface LibraryMoveResult {
+  correct: boolean
+  done: boolean
+  step: number
+  total: number
+  played_san: string
+  opponent_uci?: string
+  opponent_san?: string
+  fen?: string
+  legal_moves?: string[]
+}
+
+export interface LibrarySolution {
+  id: number
+  san: string[]
+  opponent_first: string
+}
+
+export interface BlindSpotInsight {
+  kind: 'theme_piece' | 'theme_region' | 'piece'
+  theme?: string
+  piece?: string
+  region?: string
+  count: number
+}
+
+export interface BlindSpots {
+  player: string | null
+  total: number
+  themes: ThemeCount[]
+  pieces: { piece: string; count: number }[]
+  regions: { region: string; count: number }[]
+  loose_squares: number[]
+  landing_squares: number[]
+  insights: BlindSpotInsight[]
 }

@@ -52,6 +52,7 @@ class AnalysisRequest(BaseModel):
     mistake: float = Field(default=1.0, ge=0, le=100)
     blunder: float = Field(default=2.0, ge=0, le=100)
     ignore_decided: bool = True
+    rating_aware: bool = False
     update_profile: bool = True
 
 
@@ -87,6 +88,7 @@ def build_params(
     blunder: float,
     ignore_decided: bool,
     update_profile: bool = True,
+    rating_aware: bool = False,
 ) -> dict:
     return {
         "game_ids": game_ids,
@@ -101,6 +103,7 @@ def build_params(
             "mistake": mistake,
             "blunder": blunder,
             "ignore_decided": ignore_decided,
+            "rating_aware": rating_aware,
         },
     }
 
@@ -141,6 +144,7 @@ def run_analysis(
         request.blunder,
         request.ignore_decided,
         request.update_profile,
+        request.rating_aware,
     )
     return {"job": start_job(db, user, params)}
 
@@ -156,6 +160,7 @@ def params_for(
     min_loss: float,
     time_pressure: float,
     ignore_decided: bool,
+    rating_aware: bool = False,
 ) -> dict:
     rows = game_service.games_by_fingerprint(db, user.id, result["fingerprints"])
     return build_params(
@@ -170,6 +175,8 @@ def params_for(
         1.0,
         2.0,
         ignore_decided,
+        True,
+        rating_aware,
     )
 
 
@@ -205,6 +212,7 @@ async def upload_and_analyze(
     min_loss: float = Form(default=1.0, ge=0, le=100),
     time_pressure: float = Form(default=30.0, ge=0, le=3600),
     ignore_decided: bool = Form(default=True),
+    rating_aware: bool = Form(default=False),
     user: User = Depends(auth.current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -225,6 +233,7 @@ async def upload_and_analyze(
         min_loss,
         time_pressure,
         ignore_decided,
+        rating_aware,
     )
     params["limit"] = limit
     return launch(db, user, result, params)

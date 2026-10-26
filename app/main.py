@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
@@ -34,6 +35,7 @@ from app.services import (
     analysis_service,
     digest_service,
     export_service,
+    tactics_service,
     job_service,
     token_service,
     user_service,
@@ -143,6 +145,7 @@ async def lifespan(_app: FastAPI):
         token_service.prune(session)
     job_service.recover_interrupted()
     digest_service.scheduler.start()
+    threading.Thread(target=tactics_service.run_background, name="tactics", daemon=True).start()
     yield
     digest_service.scheduler.stop()
     job_service.shutdown()
@@ -381,6 +384,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="also count mistakes made in already-decided positions",
     )
     parser.add_argument(
+        "--rating-aware",
+        action="store_true",
+        help="scale mistake thresholds by the player's rating from the PGN headers",
+    )
+    parser.add_argument(
         "--save",
         action="store_true",
         help="store the games and results in the database as well (requires --user)",
@@ -615,6 +623,7 @@ def main(argv=None) -> int:
         ignore_decided=not args.include_decided,
         book=args.book,
         exclude_book=args.exclude_book,
+        rating_aware=args.rating_aware,
     )
 
     owner_id = None

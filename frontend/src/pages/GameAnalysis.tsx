@@ -5,6 +5,7 @@ import ChessBoard, { sourceFromUci, squareFromUci } from '../components/ChessBoa
 import type { BoardArrow } from '../components/ChessBoard.tsx'
 import GameNotes from '../components/GameNotes.tsx'
 import ErrorNotice from '../components/ErrorNotice.tsx'
+import EvalBar from '../components/EvalBar.tsx'
 import JobProgress from '../components/JobProgress.tsx'
 import MistakeCard from '../components/MistakeCard.tsx'
 import { useCopy } from '../hooks/useCopy.ts'
@@ -17,6 +18,8 @@ import type { Game, GameDetail, Mistake, Move, Side } from '../types.ts'
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
+const GLYPHS: Record<string, string> = { inaccuracy: '?!', mistake: '?', blunder: '??' }
+
 export default function GameAnalysis() {
   const { gameId } = useParams()
   const [data, setData] = useState<GameDetail | null>(null)
@@ -26,6 +29,8 @@ export default function GameAnalysis() {
   const [ply, setPly] = useState(1)
   const [perspective, setPerspective] = useState<Side>('white')
   const [showArrows, setShowArrows] = useState(true)
+  const [flipped, setFlipped] = useState(false)
+  const [focus, setFocus] = useState<string[]>([])
   const [copyError, setCopyError] = useState<Problem>(null)
   const fenCopy = useCopy()
   const pgnCopy = useCopy()
@@ -66,6 +71,58 @@ export default function GameAnalysis() {
     ? moves[moves.length - 1].fen_after || START_FEN
     : current?.fen_before || START_FEN
   const selected = atEnd ? undefined : mistakePlies.get(ply)
+  const orientation: Side = flipped ? 'black' : 'white'
+
+  const whiteWin: number | null = useMemo(() => {
+    const row = atEnd ? moves[moves.length - 1] : current
+    if (!row) return null
+    const value = atEnd ? row.winpct_after : row.winpct_before
+    if (value === null || value === undefined) return null
+    return row.color === 'white' ? value : 100 - value
+  }, [atEnd, moves, current])
+
+  const orderedMistakes = useMemo(
+    () => [...mistakes].sort((a, b) => a.ply - b.ply),
+    [mistakes],
+  )
+
+  const goToMistake = useCallback(
+    (direction: 1 | -1) => {
+      if (!orderedMistakes.length) return
+      const pool =
+        direction === 1
+          ? orderedMistakes.filter((item) => item.ply > ply)
+          : [...orderedMistakes].reverse().filter((item) => item.ply < ply)
+      const target = pool[0] || (direction === 1 ? orderedMistakes[0] : orderedMistakes[orderedMistakes.length - 1])
+      setPly(target.ply)
+      setFocus([])
+    },
+    [orderedMistakes, ply],
+  )
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const tag = target && target.tagName ? target.tagName.toLowerCase() : ''
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.key === 'ArrowLeft') {
+        setPly((value) => Math.max(1, value - 1))
+        setFocus([])
+      } else if (event.key === 'ArrowRight') {
+        setPly((value) => Math.min(lastPly + 1, value + 1))
+        setFocus([])
+      } else if (event.key === 'f' || event.key === 'F') {
+        setFlipped((value) => !value)
+      } else if (event.key === 'n' || event.key === 'N') {
+        goToMistake(1)
+      } else if (event.key === 'p' || event.key === 'P') {
+        goToMistake(-1)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [goToMistake, lastPly])
 
   const moveRows = useMemo(() => {
     const rows = new Map<number, { number: number; white?: Move; black?: Move }>()
@@ -195,11 +252,15 @@ export default function GameAnalysis() {
         <div className="split">
           <div className="card">
             <div className="board-wrap">
-              <ChessBoard
-                fen={fen}
-                highlight={[squareFromUci(current?.uci)]}
-                arrows={arrows}
-              />
+              <div className="board-row">
+                <EvalBar white={whiteWin} flipped={flipped} />
+                <ChessBoard
+                  fen={fen}
+                  orientation={orientation}
+                  highlight={[squareFromUci(current?.uci), ...focus]}
+                  arrows={arrows}
+                />
+              </div>
               <div className="board-controls">
                 <button
                   type="button"
@@ -230,6 +291,31 @@ export default function GameAnalysis() {
                 </span>
                 {selected ? <span className="badge">mistake here</span> : null}
               </div>
+
+              <div className="row">
+                <button type="button" className="button" onClick={() => setFlipped((v) => !v)}>
+                  Flip board
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => goToMistake(-1)}
+                  disabled={!orderedMistakes.length}
+                >
+                  Previous mistake
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => goToMistake(1)}
+                  disabled={!orderedMistakes.length}
+                >
+                  Next mistake
+                </button>
+              </div>
+              <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
+                Keys: &larr; &rarr; step, N / P next and previous mistake, F flip.
+              </p>
 
               <label className="row">
                 <input
@@ -265,9 +351,19 @@ export default function GameAnalysis() {
                           ]
                             .filter(Boolean)
                             .join(' ')}
-                          onClick={() => setPly(move.ply)}
+                          onClick={() => {
+                            setPly(move.ply)
+                            setFocus([])
+                          }}
                         >
-                          <span>{move.san || '—'}</span>
+                          <span>
+                            {move.san || '—'}
+                            {mistakePlies.has(move.ply) ? (
+                              <b className="glyph">
+                                {GLYPHS[mistakePlies.get(move.ply)?.severity || ''] || ''}
+                              </b>
+                            ) : null}
+                          </span>
                           <i className="chip-dot" title="mistake" />
                         </button>
                       ) : (
@@ -321,7 +417,14 @@ export default function GameAnalysis() {
                 key={mistake.id || mistake.ply}
                 mistake={mistake}
                 selected={mistake.ply === ply}
-                onSelect={(item: Mistake) => setPly(item.ply === ply ? 1 : item.ply)}
+                onSelect={(item: Mistake) => {
+                  setPly(item.ply === ply ? 1 : item.ply)
+                  setFocus([])
+                }}
+                onFocus={(squares) => {
+                  setPly(mistake.ply)
+                  setFocus(squares)
+                }}
               />
             ))}
 

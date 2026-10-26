@@ -30,6 +30,15 @@ seeing anyone's games.
 - **Time-control breakdown** comparing bullet, blitz, rapid and classical.
 - **Weekly email digest** (opt-in, needs email configured) and live job progress over server-sent events.
 - **Typed frontend**: React with strict TypeScript, so a changed API shape fails the build instead of the page.
+- **Richer tactics**: besides mates, forks, pins and skewers, the app now spots discovered attacks, trapped pieces, back-rank weaknesses, promotions and passed pawns, overloaded defenders and removal of the defender. Each mistake says what you **missed** (what the engine's move would have done) and what your move **allowed**, with the squares to highlight and the exchange line (for example `Nxe5`).
+- **Engine-line analysis**: the engine's best line is replayed to see what it achieves (mate, material won, a sacrifice, an in-between move, deflection, interference), and a small solver proves forced mates up to mate in three.
+- **Tactic themes**: every mistake is tagged, and Training can filter by tactic. Mistakes analysed before this feature are tagged automatically in the background when the server starts.
+- **Blind spots**: which tactics, pieces and sides of the board your mistakes cluster on, with two heat boards and plain-language findings.
+- **Practice library**: load puzzles from the free Lichess puzzle database and drill the tactics you miss most, filtered by theme and rating.
+- **Opening book**: the Lichess opening names (about 3,900 lines, CC0) are built in, so "still in theory", opening names and ECO codes work with no book file, and games without an opening header are named automatically.
+- **Rating-aware severity** (opt-in): scale the mistake thresholds by each player's rating, so a 700-rated player is not judged like a 2200-rated one.
+- **Game review extras**: evaluation bar, board flip, next and previous mistake, `?!` `?` `??` marks in the move list, and keyboard shortcuts.
+- **Installable on a phone**: a web app manifest and a service worker let you add Chesslytics to your home screen.
 
 ## Security model
 
@@ -324,7 +333,18 @@ that were analysed in that run.
 python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --player Jude254 --limit-time 0.1
 python -m app.main --pgn data/Jude254_vs_manmusaa_2026.09.30.pgn --save --user Jude254
 python -m app.manage send-digests
+python -m app.manage retag
+python -m app.manage import-puzzles lichess_db_puzzle.csv.zst --limit 50000
+python -m app.manage evaluate-tactics lichess_db_puzzle.csv.zst --limit 5000
 ```
+
+`retag` analyses the tactics of older mistakes and names openings that have no name; the server also
+does this on its own at start-up. `import-puzzles` loads puzzles from the Lichess puzzle database
+(download `lichess_db_puzzle.csv.zst` from database.lichess.org; it is licensed CC0) into the
+**Practice library**; useful options are `--limit`, `--theme` (repeatable), `--min-rating`,
+`--max-rating` and `--min-popularity`. `evaluate-tactics` measures the tactic detectors against that
+same labelled file and prints precision and recall for each theme, so you can see how often the
+heuristics are right and wrong instead of guessing.
 
 `send-digests` sends the weekly digest to everyone who is due. The running server does this on its own every hour when email is configured; the command is for cron setups and testing.
 
@@ -337,7 +357,8 @@ python -m app.manage send-digests
 | `--time-pressure` | `30` | Seconds below which a move counts as time-pressured |
 | `--workers` | `1` | Parallel engine processes |
 | `--verify-with` | none | Second engine binary for an agree / disputed check |
-| `--book` / `--exclude-book` | none | Polyglot `.bin`; mark or drop moves still in theory |
+| `--book` / `--exclude-book` | built-in | Polyglot `.bin` (the built-in Lichess openings are used otherwise); mark or drop moves still in theory |
+| `--rating-aware` | off | Scale mistake thresholds by the player's rating from the PGN headers |
 | `--output` / `--output-format` | none | Write `.json`, `.csv` or `.jsonl` |
 | `--save` with `--user` | none | Store results in the database for an existing account |
 | `--no-cache` / `--rebuild-cache` | none | Bypass or rebuild the local evaluation cache |
@@ -427,6 +448,9 @@ Email features turn on when `PUBLIC_URL`, `MAIL_FROM` and one sending method are
 | `PROFILES_KEPT_PER_USER`, `JOB_RETENTION_DAYS` | `5`, `14` | History kept. |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE` | `5`, `5`, `300` | Connection pool tuning. |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | none, `gemini-2.5-flash` | Enables Coach. |
+| `HANGING_MIN_SEE_CP` | `1` | Smallest static-exchange gain, in centipawns, for a piece to count as hanging. |
+| `TACTIC_MIN_GAIN_CP` | `200` | Material an engine line must win before it is called "wins material". |
+| `SOLVER_MAX_MATE` / `SOLVER_NODE_BUDGET` | `3` / `20000` | Longest forced mate to search for, and the search size limit per position. |
 | `DAILY_PUZZLE_GOAL` | `5` | Default daily puzzle goal. Each user can change their own. |
 | `IMPORT_MAX_MONTHS` | `6` | Most Chess.com monthly archives one import may read. |
 | `PUZZLE_TOLERANCE` | `5.0` | Win-percentage a training answer may lose and still count as correct. |
@@ -440,7 +464,10 @@ Email features turn on when `PUBLIC_URL`, `MAIL_FROM` and one sending method are
 - Importing by username needs the server to reach api.chess.com and lichess.org. Only public games are available, and both sites rate limit requests.
 - Multi-move puzzles exist only for mistakes analysed after this feature was added; older mistakes stay single-move until you re-analyse. Account lockout is stored in the database and is shared.
 - Analysis jobs interrupted by a restart are marked failed (queued ones are resumed).
-- Heuristic tactics detection (SEE, motifs) is not a full tactics solver.
+- Tactic detection is pattern-based. It uses static exchange evaluation, motif rules and a small search that proves forced mates up to mate in three; it is not a full tactics solver, and a label is a hint, not a proof. Use `evaluate-tactics` to measure it on labelled puzzles.
+- Mate-in-three proofs search checking moves only; a mate that starts with a quiet move is found only when it is mate in two or shorter.
+- The practice library is empty until an administrator imports the Lichess puzzle CSV. Large imports make theme counts slower; 50,000 puzzles is a comfortable size.
+- Rating-aware severity needs Elo headers in the PGN. Without them the normal thresholds apply.
 - Time-pressure statistics need clock annotations in the PGN (Chess.com exports have them).
 - The analysis cache file is used by the command line only. The web app stores every result in the database, so redeploys never force a re-analysis and no disk is needed.
 - Backups do not contain move-by-move data; run an analysis after restoring to rebuild it.

@@ -1,4 +1,5 @@
 import type {
+  BlindSpots,
   OpeningsReport,
   TimeControlReport,
   Overview,
@@ -23,6 +24,10 @@ export function getProgress(weeks = 26): Promise<Progress> {
 
 export function getOpenings(minGames = 1): Promise<OpeningsReport> {
   return get<OpeningsReport>(`/api/patterns/openings?min_games=${minGames}`)
+}
+
+export function getBlindSpots(): Promise<BlindSpots> {
+  return get<BlindSpots>('/api/patterns/blindspots')
 }
 
 export function getTimeControls(): Promise<TimeControlReport> {

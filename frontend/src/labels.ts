@@ -14,6 +14,41 @@ export const MOTIF_LABELS: Record<string, string> = {
   fork: 'Fork allowed',
   pin: 'Pin allowed',
   skewer: 'Skewer allowed',
+  discovered_attack: 'Discovered attack allowed',
+  trapped_piece: 'Trapped piece',
+  back_rank_weakness: 'Back-rank weakness',
+  promotion: 'Promotion allowed',
+  passed_pawn: 'Passed pawn',
+  overloaded_defender: 'Overloaded defender',
+  remove_defender: 'Remove the defender',
+}
+
+export const THEME_LABELS: Record<string, string> = {
+  mate: 'Checkmate',
+  back_rank: 'Back rank',
+  fork: 'Fork',
+  pin: 'Pin',
+  skewer: 'Skewer',
+  discovered_attack: 'Discovered attack',
+  hanging_piece: 'Hanging piece',
+  trapped_piece: 'Trapped piece',
+  sacrifice: 'Sacrifice',
+  zwischenzug: 'In-between move',
+  deflection: 'Deflection',
+  remove_defender: 'Remove the defender',
+  interference: 'Interference',
+  overloaded_defender: 'Overloaded defender',
+  promotion: 'Promotion',
+  passed_pawn: 'Passed pawn',
+  capture_chain: 'Capture sequence',
+}
+
+export const THEME_ORDER: string[] = Object.keys(THEME_LABELS)
+
+export const REGION_LABELS: Record<string, string> = {
+  queenside: 'queenside',
+  center: 'the centre',
+  kingside: 'kingside',
 }
 
 export const PHASE_LABELS: Record<string, string> = {
@@ -37,6 +72,10 @@ export const PATTERN_KIND_LABELS: Record<string, string> = {
 
 export function categoryLabel(key: string): string {
   return CATEGORY_LABELS[key] || key
+}
+
+export function themeLabel(key: string): string {
+  return THEME_LABELS[key] || key.replace(/_/g, ' ')
 }
 
 export function motifLabel(key: string): string {

@@ -19,6 +19,7 @@ export default function UploadForm({ onUploaded, disabled = false }: UploadFormP
   const [depth, setDepth] = useState(12)
   const [minLoss, setMinLoss] = useState(1)
   const [ignoreDecided, setIgnoreDecided] = useState(true)
+  const [ratingAware, setRatingAware] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<Problem>(null)
   const [result, setResult] = useState<UploadSummary | null>(null)
@@ -40,6 +41,7 @@ export default function UploadForm({ onUploaded, disabled = false }: UploadFormP
         depth: depth > 0 ? depth : undefined,
         min_loss: minLoss,
         ignore_decided: ignoreDecided,
+        rating_aware: ratingAware,
       })
       setResult(summary)
       if (onUploaded) onUploaded(summary)
@@ -120,6 +122,18 @@ export default function UploadForm({ onUploaded, disabled = false }: UploadFormP
           </select>
         </div>
       </div>
+
+      <label className="row" style={{ marginTop: 4 }}>
+        <input
+          type="checkbox"
+          checked={ratingAware}
+          onChange={(event) => setRatingAware(event.target.checked)}
+        />
+        <span>
+          Judge by rating: stricter for strong players, more forgiving for beginners (uses the
+          ratings in the PGN)
+        </span>
+      </label>
 
       <div className="row">
         <button type="submit" className="button primary" disabled={busy || disabled || gate.blocked}>

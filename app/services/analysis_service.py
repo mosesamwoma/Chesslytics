@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app import settings
 from app.chess.book import open_book
+from app.chess.tactics import themes_text
 from app.chess.engine import ChessEngine, SearchLimit, find_stockfish
 from app.chess.evaluator import (
     MATE_SCORE_CP,
@@ -623,6 +624,8 @@ def _apply_mistake(row: Mistake, user_id: int, record: dict) -> Mistake:
     row.verified_loss = record.get("verified_loss")
     row.agreed = record.get("agreed")
     row.facts = record.get("facts")
+    tactics = (record.get("facts") or {}).get("tactics") or {}
+    row.themes_text = themes_text(tactics.get("themes") or [])
     return row
 
 

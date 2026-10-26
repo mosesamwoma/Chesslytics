@@ -38,6 +38,7 @@ PUZZLE_COLUMNS = [
     "best_line_san",
     "played_move",
     "category",
+    "themes",
     "severity",
     "loss_pawns",
     "phase",
@@ -312,6 +313,7 @@ def to_puzzle(
         "category": mistake.category,
         "loss": mistake.loss,
         "in_book": mistake.in_book,
+        "themes": ((mistake.facts or {}).get("tactics") or {}).get("themes") or [],
         "attempts": tally.get("attempts", 0),
         "solved": tally.get("solved", 0) > 0,
     }
@@ -346,8 +348,11 @@ def puzzle_query(
     category: Optional[str] = None,
     severity: Optional[str] = None,
     player: Optional[str] = None,
+    theme: Optional[str] = None,
 ):
     statement = select(Mistake).where(Mistake.user_id == user_id, Mistake.fen.is_not(None))
+    if theme:
+        statement = statement.where(Mistake.themes_text.like(f"%|{theme}|%"))
     if category:
         statement = statement.where(Mistake.category == category)
     if severity:
@@ -364,9 +369,10 @@ def _practice_order(
     severity: Optional[str],
     player: Optional[str],
     practice: str,
+    theme: Optional[str] = None,
 ) -> tuple[list[int], dict[int, dict]]:
     candidates = session.execute(
-        puzzle_query(user_id, category, severity, player)
+        puzzle_query(user_id, category, severity, player, theme)
         .with_only_columns(Mistake.id, Mistake.loss_cp)
         .order_by(Mistake.loss_cp.desc(), Mistake.id)
     ).all()
@@ -408,8 +414,11 @@ def _list_by_practice(
     practice: str,
     limit: int,
     offset: int,
+    theme: Optional[str] = None,
 ) -> tuple[list[dict], int]:
-    ordered, states = _practice_order(session, user_id, category, severity, player, practice)
+    ordered, states = _practice_order(
+        session, user_id, category, severity, player, practice, theme
+    )
     page = ordered[max(0, offset) : max(0, offset) + max(1, min(limit, 200))]
     if not page:
         return [], len(ordered)
@@ -443,12 +452,13 @@ def list_puzzles(
     limit: int = 20,
     offset: int = 0,
     practice: str = "all",
+    theme: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     if unseen_only and practice == "all":
         practice = "new"
     if practice != "all":
         return _list_by_practice(
-            session, user_id, category, severity, player, practice, limit, offset
+            session, user_id, category, severity, player, practice, limit, offset, theme
         )
     tally = (
         select(
@@ -464,7 +474,7 @@ def list_puzzles(
     )
     seen = func.coalesce(tally.c.attempts, 0)
 
-    statement = puzzle_query(user_id, category, severity, player).outerjoin(
+    statement = puzzle_query(user_id, category, severity, player, theme).outerjoin(
         tally, tally.c.mistake_id == Mistake.id
     )
     if unseen_only:
@@ -645,9 +655,10 @@ def puzzles_csv(
     user_id: int,
     category: Optional[str] = None,
     severity: Optional[str] = None,
+    theme: Optional[str] = None,
 ) -> tuple[str, int]:
     statement = (
-        puzzle_query(user_id, category, severity)
+        puzzle_query(user_id, category, severity, None, theme)
         .order_by(Mistake.loss_cp.desc(), Mistake.id)
         .limit(EXPORT_ROW_LIMIT)
     )
@@ -671,6 +682,7 @@ def puzzles_csv(
             "best_line_san": " ".join(line_san(mistake)),
             "played_move": mistake.played_move,
             "category": mistake.category,
+            "themes": " ".join(((mistake.facts or {}).get("tactics") or {}).get("themes") or []),
             "severity": mistake.severity,
             "loss_pawns": mistake.loss,
             "phase": mistake.phase,

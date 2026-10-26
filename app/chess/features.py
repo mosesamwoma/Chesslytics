@@ -3,7 +3,8 @@ from __future__ import annotations
 import chess
 
 from app.chess.pieces import PIECE_NAMES, PIECE_VALUES
-from app.chess.see import static_exchange
+from app import settings
+from app.chess.see import exchange_sequence, static_exchange
 
 
 def material_balance(board: chess.Board) -> dict:
@@ -60,7 +61,7 @@ def find_hanging_pieces(board: chess.Board, color: chess.Color) -> list[dict]:
             continue
 
         gain = static_exchange(board, move)
-        if gain <= 0:
+        if gain < settings.hanging_min_see_cp():
             continue
         if square in best_by_square and best_by_square[square]["see"] >= gain:
             continue
@@ -81,6 +82,7 @@ def find_hanging_pieces(board: chess.Board, color: chess.Color) -> list[dict]:
             "attackers": len(attackers),
             "defended": bool(defenders),
             "winning_capture": move.uci(),
+            "exchange": exchange_sequence(board, move),
         }
 
     return sorted(

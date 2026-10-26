@@ -287,6 +287,22 @@ def email_enabled() -> bool:
     return not email_missing()
 
 
+def hanging_min_see_cp() -> int:
+    return env_int("HANGING_MIN_SEE_CP", 1, minimum=1, maximum=900)
+
+
+def tactic_min_gain_cp() -> int:
+    return env_int("TACTIC_MIN_GAIN_CP", 200, minimum=50, maximum=900)
+
+
+def solver_max_mate() -> int:
+    return env_int("SOLVER_MAX_MATE", 3, minimum=1, maximum=3)
+
+
+def solver_node_budget() -> int:
+    return env_int("SOLVER_NODE_BUDGET", 20000, minimum=1000, maximum=500000)
+
+
 def daily_puzzle_goal() -> int:
     return env_int("DAILY_PUZZLE_GOAL", 5, minimum=1, maximum=100)
 

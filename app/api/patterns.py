@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app import auth
 from app.database.database import get_db
 from app.database.models import Game, Mistake, PlayerProfile, User
-from app.services import analysis_service, progress_service
+from app.services import analysis_service, blindspot_service, progress_service
 
 router = APIRouter(prefix="/api/patterns", tags=["patterns"])
 
@@ -68,6 +68,13 @@ def progress(
     db: Session = Depends(get_db),
 ) -> dict:
     return progress_service.progress(db, user.id, weeks)
+
+
+@router.get("/blindspots")
+def blindspots(
+    user: User = Depends(auth.current_user), db: Session = Depends(get_db)
+) -> dict:
+    return blindspot_service.blindspots(db, user.id)
 
 
 @router.get("/time-controls")

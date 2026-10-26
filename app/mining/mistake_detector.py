@@ -7,6 +7,7 @@ import chess
 
 from app.chess.book import BookReader
 from app.chess.features import newly_hanging
+from app.chess.tactics import analyze_mistake
 
 DECIDED_WIN_PCT = 90.0
 MOVE_BUCKETS = [(1, 10), (11, 20), (21, 30), (31, 40), (41, 10_000)]
@@ -24,6 +25,7 @@ class MinerConfig:
     ignore_decided: bool = True
     book: Optional[str] = None
     exclude_book: bool = False
+    rating_aware: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -37,15 +39,30 @@ class MinerConfig:
             "ignore_decided": self.ignore_decided,
             "book": self.book,
             "exclude_book": self.exclude_book,
+            "rating_aware": self.rating_aware,
         }
 
 
-def severity_for(loss_pawns: float, config: MinerConfig) -> str:
-    if loss_pawns >= config.blunder:
+def rating_scale(elo: Optional[int]) -> float:
+    if elo is None or elo <= 0:
+        return 1.0
+    return max(0.7, min(1.6, 1.0 + (1500 - elo) / 2000.0))
+
+
+def parse_elo(value: Any) -> Optional[int]:
+    try:
+        elo = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return elo if 100 <= elo <= 3600 else None
+
+
+def severity_for(loss_pawns: float, config: MinerConfig, scale: float = 1.0) -> str:
+    if loss_pawns >= config.blunder * scale:
         return "blunder"
-    if loss_pawns >= config.mistake:
+    if loss_pawns >= config.mistake * scale:
         return "mistake"
-    if loss_pawns >= config.inaccuracy:
+    if loss_pawns >= config.inaccuracy * scale:
         return "inaccuracy"
     return "normal"
 
@@ -238,7 +255,9 @@ def build_records(
 
             loss_cp = move["loss_cp"]
             loss_pawns = max(loss_cp, 0) / 100.0
-            if loss_pawns < config.min_loss:
+            player_elo = parse_elo(metadata.get(f"{move['color']}_elo"))
+            scale = rating_scale(player_elo) if config.rating_aware else 1.0
+            if loss_pawns < config.min_loss * scale:
                 continue
 
             win_before = move["winpct_before"]
@@ -276,7 +295,7 @@ def build_records(
                 "winpct_before": round(win_before, 1),
                 "winpct_after": round(win_after, 1),
                 "winpct_loss": round(win_before - win_after, 1),
-                "severity": severity_for(loss_pawns, config),
+                "severity": severity_for(loss_pawns, config, scale),
                 "fen": move["fen_before"],
                 "fen_after": move.get("fen_after"),
                 "phase": move["phase"],
@@ -308,6 +327,8 @@ def build_records(
                     "material_after": move.get("material_after"),
                     "king_safety_after": move.get("king_safety_after"),
                     "best_line": move.get("best_line") or [],
+                    "player_elo": player_elo,
+                    "rating_scale": round(scale, 2),
                 },
                 "time_remaining": clock_before,
                 "clock_after": move.get("clock_after"),
@@ -322,6 +343,13 @@ def build_records(
                 ),
             }
             record["category"], record["category_basis"] = categorize(record, config)
+            record["facts"]["tactics"] = analyze_mistake(
+                record["fen"],
+                record.get("played_uci"),
+                record["facts"]["best_line"],
+                record.get("best_move_uci"),
+                record["facts"],
+            )
             if config.exclude_book and in_book:
                 context["excluded_book"] += 1
                 continue

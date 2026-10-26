@@ -2,11 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ChessBoard, { sourceFromUci, squareFromUci } from '../components/ChessBoard.tsx'
 import type { BoardArrow } from '../components/ChessBoard.tsx'
+import LibraryPractice from '../components/LibraryPractice.tsx'
 import PracticeGoal from '../components/PracticeGoal.tsx'
+import TacticsPanel from '../components/TacticsPanel.tsx'
+import { destinations, movesFrom, pieceAt, sideToMove } from '../chessUtils.ts'
 import ErrorNotice from '../components/ErrorNotice.tsx'
 import SeverityBadge from '../components/SeverityBadge.tsx'
 import StatTile from '../components/StatTile.tsx'
-import { categoryLabel, phaseLabel } from '../labels.ts'
+import { categoryLabel, phaseLabel, themeLabel } from '../labels.ts'
 import { useCopy } from '../hooks/useCopy.ts'
 import { toProblem } from '../services/api.ts'
 import type { Problem } from '../services/api.ts'
@@ -16,6 +19,7 @@ import {
   getSolution,
   getStats,
   listPuzzles,
+  listThemes,
   submitAttempt,
 } from '../services/trainingService.ts'
 import type { PuzzleFilters } from '../services/trainingService.ts'
@@ -26,6 +30,7 @@ import type {
   PuzzlePage,
   Review,
   Solution,
+  ThemeCount,
   TrainingStats,
 } from '../types.ts'
 
@@ -98,44 +103,9 @@ function startFollow(line: LineStep): FollowState {
   }
 }
 
-export function sideToMove(fen: string | null | undefined): 'white' | 'black' {
-  return (fen || '').split(' ')[1] === 'b' ? 'black' : 'white'
-}
-
-export function pieceAt(
-  fen: string | null | undefined,
-  square: string | null | undefined,
-): { type: string; isWhite: boolean } | null {
-  const placement = (fen || '').split(' ')[0]
-  if (!placement || !square) return null
-  const file = square.charCodeAt(0) - 97
-  const rank = Number(square[1])
-  if (file < 0 || file > 7 || !(rank >= 1 && rank <= 8)) return null
-  const row = placement.split('/')[8 - rank]
-  if (!row) return null
-  let index = 0
-  for (const char of row) {
-    if (/\d/.test(char)) {
-      index += Number(char)
-      continue
-    }
-    if (index === file) {
-      return { type: char.toLowerCase(), isWhite: char === char.toUpperCase() }
-    }
-    index += 1
-  }
-  return null
-}
-
-export function movesFrom(legalMoves: string[] | null | undefined, square: string): string[] {
-  return (legalMoves || []).filter((uci) => uci.slice(0, 2) === square)
-}
-
-export function destinations(legalMoves: string[] | null | undefined, square: string): string[] {
-  return [...new Set(movesFrom(legalMoves, square).map((uci) => uci.slice(2, 4)))]
-}
-
-export default function Training() {
+function MyMistakes() {
+  const [themeList, setThemeList] = useState<ThemeCount[]>([])
+  const [focusSquares, setFocusSquares] = useState<string[]>([])
   const [filters, setFilters] = useState<PuzzleFilters>({
     category: '',
     severity: '',
@@ -172,6 +142,7 @@ export default function Training() {
       setRevealed(null)
       setFollow(null)
       setHintSquare(null)
+      setFocusSquares([])
     } catch (err) {
       setError(toProblem(err))
     } finally {
@@ -182,6 +153,18 @@ export default function Training() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    let active = true
+    listThemes()
+      .then((payload) => {
+        if (active) setThemeList(payload.themes)
+      })
+      .catch(() => null)
+    return () => {
+      active = false
+    }
+  }, [])
 
   const puzzles = data?.puzzles || []
   const puzzle = puzzles[index] || null
@@ -222,6 +205,7 @@ export default function Training() {
       setRevealed(null)
       setFollow(null)
       setHintSquare(null)
+      setFocusSquares([])
     },
     [puzzles.length],
   )
@@ -252,6 +236,11 @@ export default function Training() {
         setRevealed(null)
         setHintSquare(null)
         setFollow(result.correct && result.line ? startFollow(result.line) : null)
+        if (!(result.correct && result.line)) {
+          getSolution(puzzle.id)
+            .then(setRevealed)
+            .catch(() => null)
+        }
         setStats(await getStats())
         setData((current) =>
           current
@@ -304,6 +293,9 @@ export default function Training() {
             lastMove: uci,
             message: 'Line complete. You found every move.',
           })
+          getSolution(puzzle.id)
+            .then(setRevealed)
+            .catch(() => null)
         } else {
           setFollow({
             fen: result.fen,
@@ -464,6 +456,23 @@ export default function Training() {
             ))}
           </select>
         </div>
+        {themeList.length ? (
+          <div className="field">
+            <label htmlFor="theme">Tactic</label>
+            <select
+              id="theme"
+              value={filters.theme || ''}
+              onChange={(event) => setFilters({ ...filters, theme: event.target.value })}
+            >
+              <option value="">any tactic</option>
+              {themeList.map((item) => (
+                <option key={item.theme} value={item.theme}>
+                  {themeLabel(item.theme)} ({item.count})
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <div className="field">
           <label htmlFor="practice">Practice</label>
           <select
@@ -483,7 +492,11 @@ export default function Training() {
         </span>
         <a
           className="button"
-          href={exportUrl({ category: filters.category, severity: filters.severity })}
+          href={exportUrl({
+            category: filters.category,
+            severity: filters.severity,
+            theme: filters.theme,
+          })}
         >
           Export puzzles (CSV)
         </a>
@@ -508,7 +521,7 @@ export default function Training() {
                 orientation={mover}
                 selected={selected}
                 targets={reachable}
-                highlight={[hintSquare]}
+                highlight={[hintSquare, ...focusSquares]}
                 lastMove={follow ? follow.lastMove : feedback?.played_uci || null}
                 arrows={arrows}
                 onSquareClick={onSquareClick}
@@ -679,6 +692,7 @@ export default function Training() {
                     Best line: <span className="best mono">{revealed.best_line_san.join(' ')}</span>
                   </p>
                 ) : null}
+                <TacticsPanel tactics={revealed.facts?.tactics} onFocus={setFocusSquares} />
                 {revealed.category_basis ? (
                   <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
                     {revealed.category_basis}
@@ -707,6 +721,35 @@ export default function Training() {
       ) : null}
 
       {loading && !puzzles.length ? <p className="muted">Loading puzzles…</p> : null}
+    </div>
+  )
+}
+
+export default function Training() {
+  const [mode, setMode] = useState<'mine' | 'library'>('mine')
+  return (
+    <div>
+      <div className="tabs training-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === 'mine'}
+          className={mode === 'mine' ? 'tab active' : 'tab'}
+          onClick={() => setMode('mine')}
+        >
+          My mistakes
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === 'library'}
+          className={mode === 'library' ? 'tab active' : 'tab'}
+          onClick={() => setMode('library')}
+        >
+          Practice library
+        </button>
+      </div>
+      {mode === 'mine' ? <MyMistakes /> : <LibraryPractice />}
     </div>
   )
 }

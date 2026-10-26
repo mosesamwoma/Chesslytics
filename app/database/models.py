@@ -267,6 +267,7 @@ class Mistake(Base):
     in_book: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     verified_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     verified_loss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    themes_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     agreed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     facts: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
@@ -361,3 +362,15 @@ class CoachInsight(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     profile: Mapped[Optional["PlayerProfile"]] = relationship()
+
+
+class LibraryPuzzle(Base):
+    __tablename__ = "library_puzzles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    fen: Mapped[str] = mapped_column(Text)
+    moves: Mapped[str] = mapped_column(Text)
+    rating: Mapped[int] = mapped_column(Integer, index=True)
+    popularity: Mapped[int] = mapped_column(Integer, default=0)
+    themes_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ErrorNotice from '../components/ErrorNotice.tsx'
 import OpeningsTable from '../components/OpeningsTable.tsx'
+import BlindSpotsPanel from '../components/BlindSpotsPanel.tsx'
 import PatternCard from '../components/PatternCard.tsx'
 import TimeControlTable from '../components/TimeControlTable.tsx'
 import { useAsync } from '../hooks/useAsync.ts'
@@ -144,6 +145,11 @@ export default function Patterns() {
         ) : (
           <p className="muted">Loading&hellip;</p>
         )}
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <h2>Blind spots</h2>
+        <BlindSpotsPanel />
       </div>
 
       <div style={{ marginTop: 24 }}>

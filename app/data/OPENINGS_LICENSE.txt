@@ -1,0 +1,3 @@
+Opening names and moves come from the lichess-org/chess-openings data set
+(https://github.com/lichess-org/chess-openings), released under the CC0 1.0 Universal
+Public Domain Dedication.

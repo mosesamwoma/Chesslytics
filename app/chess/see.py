@@ -72,6 +72,40 @@ def static_exchange(board: chess.Board, move: chess.Move) -> int:
     return victim + promotion_gain(move) - swap_gain(work, square)
 
 
+def best_recapture(board: chess.Board, square: chess.Square) -> Optional[chess.Move]:
+    best = 0
+    chosen: Optional[chess.Move] = None
+    for move in captures_onto(board, square):
+        immediate = victim_value(board, move) + promotion_gain(move)
+        if immediate <= best:
+            continue
+        board.push(move)
+        try:
+            gain = immediate - swap_gain(board, square, 1)
+        finally:
+            board.pop()
+        if gain > best:
+            best = gain
+            chosen = move
+    return chosen
+
+
+def exchange_sequence(board: chess.Board, move: chess.Move, limit: int = 10) -> list[str]:
+    if move not in board.legal_moves:
+        return []
+    work = board.copy(stack=False)
+    square = move.to_square
+    names = [work.san(move)]
+    work.push(move)
+    while len(names) < limit:
+        reply = best_recapture(work, square)
+        if reply is None:
+            break
+        names.append(work.san(reply))
+        work.push(reply)
+    return names
+
+
 def best_exchange(
     board: chess.Board, square: chess.Square
 ) -> tuple[int, Optional[chess.Move]]:

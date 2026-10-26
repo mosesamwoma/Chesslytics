@@ -5,6 +5,12 @@ import { AuthProvider } from './auth/AuthContext.tsx'
 import App from './App.tsx'
 import './styles.css'
 
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => undefined)
+  })
+}
+
 const container = document.getElementById('root')
 if (!container) throw new Error('missing #root element')
 

@@ -67,12 +67,14 @@ def book_path(explicit: Optional[str] = None) -> Optional[str]:
     return os.environ.get("BOOK_PATH") or None
 
 
-def open_book(explicit: Optional[str] = None) -> Optional[BookReader]:
+def open_book(explicit: Optional[str] = None):
     chosen = book_path(explicit)
     if not chosen:
-        return None
+        from app.chess.openings import EcoBook
+
+        return EcoBook()
     return BookReader(chosen)
 
 
-def describe(reader: Optional[BookReader]) -> str:
+def describe(reader) -> str:
     return reader.name if reader is not None else "none"

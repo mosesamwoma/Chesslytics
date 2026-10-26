@@ -11,7 +11,12 @@ from app import auth, security, settings
 from app.chess.engine import SearchLimit
 from app.database.database import get_db
 from app.database.models import User
-from app.services import analysis_service, training_service
+from app.services import (
+    analysis_service,
+    library_service,
+    tactics_service,
+    training_service,
+)
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -27,6 +32,11 @@ class AttemptRequest(BaseModel):
 
 class ContinueRequest(BaseModel):
     step: int = Field(ge=2, le=12)
+    uci: str = Field(min_length=4, max_length=5, pattern=r"^[a-hA-H][1-8][a-hA-H][1-8][qrbnQRBN]?$")
+
+
+class LibraryMove(BaseModel):
+    step: int = Field(ge=1, le=40)
     uci: str = Field(min_length=4, max_length=5, pattern=r"^[a-hA-H][1-8][a-hA-H][1-8][qrbnQRBN]?$")
 
 
@@ -58,6 +68,7 @@ def list_puzzles(
     category: Optional[str] = Query(default=None, max_length=32),
     severity: Optional[str] = Query(default=None, max_length=16),
     player: Optional[str] = Query(default=None, max_length=128),
+    theme: Optional[str] = Query(default=None, max_length=32),
     unseen_only: bool = Query(default=False),
     practice: Literal["all", "queue", "due", "new"] = Query(default="all"),
     limit: int = Query(20, ge=1, le=200),
@@ -75,6 +86,7 @@ def list_puzzles(
         limit=limit,
         offset=offset,
         practice=practice,
+        theme=tactics_service.valid_theme(theme),
     )
     return {
         "total": total,
@@ -177,14 +189,111 @@ def list_attempts(
     return {"attempts": [training_service.attempt_to_dict(row) for row in rows]}
 
 
+def _library_or_404(db: Session, puzzle_id: int):
+    puzzle = library_service.get(db, puzzle_id)
+    if puzzle is None:
+        raise HTTPException(status_code=404, detail="puzzle not found")
+    return puzzle
+
+
+@router.get("/library/status")
+def library_status(
+    user: User = Depends(auth.current_user), db: Session = Depends(get_db)
+) -> dict:
+    total = library_service.count(db)
+    if not total:
+        return {"count": 0, "themes": [], "recommended": []}
+    available = {item["theme"]: item["count"] for item in library_service.theme_counts(db)}
+    mine = tactics_service.theme_counts(db, user.id)
+    recommended = []
+    for item in mine:
+        lichess = library_service.FEATURED.get(item["theme"])
+        if lichess and available.get(lichess):
+            recommended.append(
+                {
+                    "theme": item["theme"],
+                    "lichess": lichess,
+                    "mistakes": item["count"],
+                    "available": available[lichess],
+                }
+            )
+    featured = [
+        {"theme": ours, "lichess": lichess, "available": available.get(lichess, 0)}
+        for ours, lichess in library_service.FEATURED.items()
+        if available.get(lichess)
+    ]
+    return {"count": total, "themes": featured, "recommended": recommended[:5]}
+
+
+@router.get("/library/next")
+def library_next(
+    theme: Optional[str] = Query(default=None, max_length=32),
+    min_rating: Optional[int] = Query(default=None, ge=0, le=4000),
+    max_rating: Optional[int] = Query(default=None, ge=0, le=4000),
+    exclude: Optional[str] = Query(default=None, max_length=1200),
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    skip = []
+    for part in (exclude or "").split(","):
+        if part.strip().isdigit():
+            skip.append(int(part))
+    puzzle = library_service.pick(
+        db, library_service.valid_theme(theme), min_rating, max_rating, skip
+    )
+    if puzzle is None:
+        raise HTTPException(status_code=404, detail="no library puzzle matches those filters")
+    return library_service.start(puzzle)
+
+
+@router.post("/library/{puzzle_id}/move")
+def library_move(
+    puzzle_id: int,
+    request: LibraryMove,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    wait = security.limiter.consume(f"line:{user.id}", LINE_MOVES_PER_MINUTE, 60)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"slow down; try again in {wait} seconds",
+            headers={"Retry-After": str(wait)},
+        )
+    puzzle = _library_or_404(db, puzzle_id)
+    try:
+        return library_service.check(puzzle, request.step, request.uci)
+    except library_service.LibraryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/library/{puzzle_id}/solution")
+def library_solution(
+    puzzle_id: int,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return library_service.solution(_library_or_404(db, puzzle_id))
+
+
+@router.get("/themes")
+def list_themes(
+    user: User = Depends(auth.current_user), db: Session = Depends(get_db)
+) -> dict:
+    return {"themes": tactics_service.theme_counts(db, user.id)}
+
+
 @router.get("/export")
 def export_puzzles(
     category: Optional[str] = Query(default=None, max_length=32),
     severity: Optional[str] = Query(default=None, max_length=16),
+    theme: Optional[str] = Query(default=None, max_length=32),
     user: User = Depends(auth.current_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    content, count = training_service.puzzles_csv(db, user.id, category, severity)
+    content, count = training_service.puzzles_csv(
+        db, user.id, category, severity, tactics_service.valid_theme(theme)
+    )
     return Response(
         content=content,
         media_type="text/csv; charset=utf-8",

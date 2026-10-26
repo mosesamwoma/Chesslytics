@@ -1,10 +1,12 @@
 import SeverityBadge from './SeverityBadge.tsx'
+import TacticsPanel from './TacticsPanel.tsx'
 import { categoryLabel, motifLabel, phaseLabel } from '../labels.ts'
 import type { Mistake } from '../types.ts'
 
 interface MistakeCardProps {
   mistake: Mistake
   onSelect?: (mistake: Mistake) => void
+  onFocus?: (squares: string[]) => void
   selected?: boolean
 }
 
@@ -19,10 +21,16 @@ function formatClock(seconds: number | null | undefined): string | null {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-export default function MistakeCard({ mistake, onSelect, selected }: MistakeCardProps) {
+export default function MistakeCard({
+  mistake,
+  onSelect,
+  onFocus,
+  selected,
+}: MistakeCardProps) {
   const clock = formatClock(mistake.time_remaining)
   const motifs = mistake.facts?.motifs_allowed || []
   const hung = mistake.facts?.hung_piece
+  const tactics = mistake.facts?.tactics
   return (
     <div className="card mistake-card">
       <div className="head">
@@ -73,14 +81,16 @@ export default function MistakeCard({ mistake, onSelect, selected }: MistakeCard
             disputed
           </span>
         ) : null}
-        {motifs.map((motif) => (
+        {tactics ? null : motifs.map((motif) => (
           <span className="badge" key={`${motif.kind}-${motif.detail || ''}`}>
             {motifLabel(motif.kind)}
           </span>
         ))}
       </div>
 
-      {motifs.length ? (
+      {tactics ? (
+        <TacticsPanel tactics={tactics} onFocus={onFocus} />
+      ) : motifs.length ? (
         <ul className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>
           {motifs.map((motif) => (
             <li key={`${motif.kind}-${motif.detail || ''}`}>{motif.detail || motifLabel(motif.kind)}</li>

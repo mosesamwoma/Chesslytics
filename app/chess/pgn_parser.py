@@ -79,8 +79,29 @@ def opening_name(headers) -> Optional[str]:
     return None
 
 
+def inferred_opening(game: chess.pgn.Game) -> tuple[str, str]:
+    from app.chess import openings
+
+    ucis: list[str] = []
+    for move in game.mainline_moves():
+        ucis.append(move.uci())
+        if len(ucis) >= openings.MAX_CLASSIFY_PLIES:
+            break
+    found = openings.classify_moves(ucis)
+    if found is None:
+        return "", ""
+    return found[0], found[1]
+
+
 def game_metadata(game: chess.pgn.Game) -> dict:
     headers = game.headers
+    eco = headers.get("ECO", "")
+    opening = headers.get("Opening", "")
+    if not opening or opening in ("?", "-"):
+        guessed_eco, guessed_name = inferred_opening(game)
+        opening = guessed_name or opening
+        if not eco or eco in ("?", "-"):
+            eco = guessed_eco or eco
     return {
         "fingerprint": game_fingerprint(game),
         "white": headers.get("White", ""),
@@ -89,8 +110,8 @@ def game_metadata(game: chess.pgn.Game) -> dict:
         "date": headers.get("Date", ""),
         "event": headers.get("Event", ""),
         "site": headers.get("Site", ""),
-        "eco": headers.get("ECO", ""),
-        "opening": headers.get("Opening", ""),
+        "eco": eco,
+        "opening": opening,
         "variation": headers.get("Variation", ""),
         "time_control": headers.get("TimeControl", ""),
         "white_elo": headers.get("WhiteElo", ""),

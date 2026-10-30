@@ -1,5 +1,5 @@
-import type { AuthInfo, RegisterResult, UserEnvelope } from '../types.ts'
-import { del, post, request } from './api.ts'
+import type { AuthInfo, RegisterResult, SessionInfo, UserEnvelope } from '../types.ts'
+import { del, get, post, request } from './api.ts'
 
 function quietPost<T>(path: string, payload: unknown): Promise<T> {
   return request<T>(path, {
@@ -71,4 +71,16 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
 
 export function deleteAccount(password: string): Promise<unknown> {
   return del<unknown>('/api/auth/me', { password })
+}
+
+export function listSessions(): Promise<{ sessions: SessionInfo[] }> {
+  return get<{ sessions: SessionInfo[] }>('/api/auth/sessions')
+}
+
+export function revokeSession(id: number): Promise<{ revoked: number; signed_out: boolean }> {
+  return del<{ revoked: number; signed_out: boolean }>(`/api/auth/sessions/${id}`)
+}
+
+export function revokeOtherSessions(): Promise<{ revoked: number }> {
+  return post<{ revoked: number }>('/api/auth/sessions/revoke-others', {})
 }

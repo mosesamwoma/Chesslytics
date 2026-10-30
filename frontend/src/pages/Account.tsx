@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent } from 'react'
 import { useAuth } from '../auth/AuthContext.tsx'
 import ErrorNotice from '../components/ErrorNotice.tsx'
 import RecoveryCode from '../components/RecoveryCode.tsx'
+import SessionsPanel from '../components/SessionsPanel.tsx'
 import Modal from '../components/Modal.tsx'
 import { useRetryAfter } from '../hooks/useRetryAfter.ts'
 import {
@@ -370,6 +371,8 @@ export default function Account() {
           </div>
         ) : null}
       </form>
+
+      <SessionsPanel />
 
       <div className="card" style={{ marginTop: 16 }}>
         <h2>Recovery code</h2>

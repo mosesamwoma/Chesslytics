@@ -1727,3 +1727,17 @@ progress {
   font-size: 12.5px;
   text-align: center;
 }
+
+.session-row {
+  justify-content: space-between;
+  padding: 10px 0;
+  border-top: 1px solid var(--gridline);
+}
+
+.session-row:first-child {
+  border-top: 0;
+}
+
+.session-row .badge {
+  margin-left: 8px;
+}

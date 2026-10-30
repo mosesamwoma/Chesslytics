@@ -25,6 +25,16 @@ export interface UserEnvelope {
   user: User
 }
 
+export interface SessionInfo {
+  id: number
+  created_at: string
+  last_seen_at: string
+  expires_at: string
+  ip: string | null
+  user_agent: string | null
+  current: boolean
+}
+
 export interface RegisterResult extends UserEnvelope {
   recovery_code: string
 }

@@ -32,7 +32,7 @@ def _load() -> None:
             for eco, name, moves in reader:
                 board = chess.Board()
                 parsed = [chess.Move.from_uci(item) for item in moves.split()]
-                for index, move in enumerate(parsed):
+                for move in parsed:
                     key = _key(board)
                     _next.setdefault(key, Counter())[move.uci()] += 1
                     board.push(move)

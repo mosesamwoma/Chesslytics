@@ -53,7 +53,7 @@ def _read_stream(stream: IO[str]) -> tuple[list[chess.pgn.Game], list[str]]:
 
 
 def game_fingerprint(game: chess.pgn.Game) -> str:
-    digest = hashlib.sha1()
+    digest = hashlib.sha1(usedforsecurity=False)
     for key in sorted(game.headers):
         digest.update(f"{key}={game.headers[key]}\n".encode("utf-8"))
     for node in game.mainline():

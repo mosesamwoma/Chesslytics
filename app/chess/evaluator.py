@@ -253,8 +253,8 @@ def _report(message: str) -> None:
     if _PROGRESS is not None:
         try:
             _PROGRESS.put(message)
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            return
 
 
 def _game_plies(game: chess.pgn.Game) -> int:
@@ -386,8 +386,8 @@ def analyze_games_parallel(
         try:
             updates.close()
             updates.join_thread()
-        except Exception:
-            pass
+        except (OSError, ValueError, AssertionError):
+            return
 
     for _position, fingerprint, _game in pending:
         if fingerprint in fresh:

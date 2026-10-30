@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app import auth, mailer, security, settings
 from app.database.database import get_db
 from app.database.models import User, utcnow
-from app.services import recovery_service, token_service, user_service
+from app.services import recovery_service, session_service, token_service, user_service
 
 logger = logging.getLogger("chesslytics")
 
@@ -125,7 +125,7 @@ def register(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if verification is not None and user.email:
         mailer.send_async(user.email, verification[0], verification[1])
-    auth.set_session_cookie(response, request, user)
+    auth.start_session(response, request, db, user)
     return {
         "user": user_service.user_payload(user, private=True),
         "recovery_code": recovery_code,
@@ -149,7 +149,7 @@ def login(
     except user_service.AuthenticationFailed:
         security.limiter.record(ip_key, LOGIN_IP_WINDOW)
         logger.info("failed login for %r from %s", payload.username[:64], ip)
-        raise HTTPException(status_code=401, detail="incorrect username or password")
+        raise HTTPException(status_code=401, detail="incorrect username or password") from None
     except user_service.AccountLocked as exc:
         security.limiter.record(ip_key, LOGIN_IP_WINDOW)
         user = user_service.get_by_username(db, payload.username)
@@ -159,19 +159,64 @@ def login(
         db.commit()
         raise too_many(
             exc.retry_after, f"too many failed attempts; try again in {exc.retry_after} seconds"
-        )
+        ) from None
     except user_service.AccountDisabled:
-        raise HTTPException(status_code=403, detail="this account has been disabled")
+        raise HTTPException(status_code=403, detail="this account has been disabled") from None
     user_service.audit(db, "auth.login", actor=user, ip=ip)
     db.commit()
-    auth.set_session_cookie(response, request, user)
+    auth.start_session(response, request, db, user)
     return {"user": user_service.user_payload(user, private=True)}
 
 
 @router.post("/logout")
-def logout(request: Request, response: Response) -> dict:
+def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
+    token = auth.read_cookie(request)
+    payload = security.read_session_token(token) if token else None
+    if payload is not None:
+        session_service.end(db, payload["uid"], payload["sid"])
+        db.commit()
     auth.clear_session_cookie(response, request)
     return {"signed_out": True}
+
+
+@router.get("/sessions")
+def list_sessions(
+    request: Request,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return {"sessions": session_service.listing(db, user.id, request.state.sid)}
+
+
+@router.post("/sessions/revoke-others")
+def revoke_other_sessions(
+    request: Request,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    count = session_service.end_all(db, user.id, keep_sid=request.state.sid)
+    user_service.audit(db, "auth.sessions_revoked", actor=user, ip=security.client_ip(request))
+    db.commit()
+    return {"revoked": count}
+
+
+@router.delete("/sessions/{session_id}")
+def revoke_session(
+    session_id: int,
+    request: Request,
+    response: Response,
+    user: User = Depends(auth.current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    mine = session_service.listing(db, user.id, request.state.sid)
+    target = next((item for item in mine if item["id"] == session_id), None)
+    if target is None or not session_service.end_one(db, user.id, session_id):
+        raise HTTPException(status_code=404, detail="session not found")
+    user_service.audit(db, "auth.session_revoked", actor=user, ip=security.client_ip(request))
+    db.commit()
+    if target["current"]:
+        auth.clear_session_cookie(response, request)
+    return {"revoked": session_id, "signed_out": bool(target["current"])}
 
 
 @router.get("/me")
@@ -306,7 +351,7 @@ def change_password(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     user_service.audit(db, "user.password_change", actor=user, ip=ip)
     db.commit()
-    auth.set_session_cookie(response, request, user)
+    auth.start_session(response, request, db, user)
     return {"changed": True}
 
 

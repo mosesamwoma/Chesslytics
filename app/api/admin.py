@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app import auth, mailer, security, settings
 from app.database.database import get_db
 from app.database.models import User
-from app.services import token_service, user_service
+from app.services import session_service, token_service, user_service
 
 router = APIRouter(
     prefix="/api/admin", tags=["admin"], dependencies=[Depends(auth.require_admin)]
@@ -127,6 +127,8 @@ def update_user(
         if not payload.is_active and _would_remove_last_admin(db, target):
             raise HTTPException(status_code=400, detail="at least one administrator is required")
         target.is_active = payload.is_active
+        if not payload.is_active:
+            session_service.end_all(db, target.id)
         user_service.revoke_sessions(db, target)
         changes.append(f"active={payload.is_active}")
 

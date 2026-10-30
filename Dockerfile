@@ -4,7 +4,7 @@ WORKDIR /build
 
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm install --global npm@12.2.0 \
-    && npm ci --no-audit --no-fund
+    && npm ci --no-audit --no-fund --ignore-scripts
 
 COPY frontend/ ./
 RUN npm run build
@@ -25,8 +25,8 @@ RUN apt-get update \
 
 WORKDIR /srv
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 COPY app ./app
 COPY data/Jude254_vs_manmusaa_2026.09.30.pgn ./data/Jude254_vs_manmusaa_2026.09.30.pgn

@@ -96,9 +96,19 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
       DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-300}
       DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-15}
+      API_RATE_LIMIT_PER_MINUTE: ${API_RATE_LIMIT_PER_MINUTE:-600}
     depends_on:
       postgres:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /srv/data/analysis:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
     expose:
       - "8000"
     networks:

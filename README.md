@@ -37,23 +37,30 @@ seeing anyone's games.
 - **Practice library**: load puzzles from the free Lichess puzzle database and drill the tactics you miss most, filtered by theme and rating.
 - **Opening book**: the Lichess opening names (about 3,900 lines, CC0) are built in, so "still in theory", opening names and ECO codes work with no book file, and games without an opening header are named automatically.
 - **Rating-aware severity** (opt-in): scale the mistake thresholds by each player's rating, so a 700-rated player is not judged like a 2200-rated one.
-- **Game review extras**: evaluation bar, board flip, next and previous mistake, `?!` `?` `??` marks in the move list, and keyboard shortcuts.
 - **Installable on a phone**: a web app manifest and a service worker let you add Chesslytics to your home screen.
+- **Game review extras**: evaluation bar, board flip, next and previous mistake, `?!` `?` `??` marks in the move list, and keyboard shortcuts.
 
 ## Security model
 
 | Area | What is enforced |
 | --- | --- |
-| Passwords | scrypt (N=32768, r=8, p=1), per-user random salt, constant-time comparison, transparent upgrade of old hashes. Minimum 10 characters, common passwords and passwords containing the username are rejected. |
-| Sessions | Signed token in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` automatically over HTTPS). No token is ever visible to JavaScript. Changing a password, disabling an account or changing a role ends that account's other sessions immediately. |
-| Brute force | Per-account lockout (8 failures, 15 minutes) stored in the database, plus a per-IP failure throttle. Unknown usernames take the same time as wrong passwords. |
-| CSRF | Every state-changing API call must carry the `X-CSRF-Protection` header, which browsers cannot add cross-site without CORS approval. |
+| Passwords | scrypt (N=32768, r=8, p=1), per-user random salt, constant-time comparison, transparent upgrade of old hashes. Minimum 10 characters; the 10,000 most common passwords (and common words with digits or symbols added), repeated characters and passwords containing the username are rejected. |
+| Sessions | Every sign-in creates a server-side session. The cookie is `HttpOnly`, `SameSite=Strict`, and over HTTPS it is `Secure` and carries the `__Host-` prefix, so a subdomain cannot overwrite it. Logging out, changing or resetting a password, disabling an account, or pressing **Sign out all other devices** revokes sessions immediately; a copied cookie stops working. Users can see and revoke their sessions on the Account page. |
+| Brute force | Per-account lockout (8 failures, 15 minutes) stored in the database, per-IP throttles on sign-in, sign-up, recovery codes and password reset, plus a global per-IP API throttle (`API_RATE_LIMIT_PER_MINUTE`). Unknown usernames take the same time as wrong passwords. |
+| CSRF | Every state-changing API call must carry the `X-CSRF-Protection` header, and requests whose `Origin` or `Sec-Fetch-Site` shows another site are refused. |
 | Data isolation | Every table holding user data carries a `user_id`; every query is scoped to the signed-in user. Other people's IDs return `404`. Administrators cannot read other users' games through any route. |
 | Abuse limits | Upload size, games per upload, games per user, plies per game, analysis depth and seconds, one active analysis per user, global queue size, per-user rate limits on uploads, puzzle attempts and Coach requests. |
 | Engine safety | Clients cannot choose engine, book or verifier paths. These were previously accepted by the API and allowed running arbitrary programs on the server. |
-| Transport and browser | Strict `Content-Security-Policy`, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS over HTTPS, `no-store` on API responses, request body size limit, optional `ALLOWED_HOSTS`. |
-| Output | CSV exports neutralise spreadsheet formula injection. Server errors never leak internals. API docs are disabled unless `ENABLE_DOCS=true`. |
-| Audit | Registrations, sign-ins, lockouts, password changes and every administrator action are recorded and shown in the admin console. |
+| Outbound requests | Importing from Chess.com or Lichess only contacts those two fixed hosts, validates the username, refuses redirects and caps the response size. |
+| Transport and browser | `Content-Security-Policy` with no inline scripts or styles and no framing, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`, cross-origin isolation headers, HSTS and `upgrade-insecure-requests` over HTTPS, `no-store` on API responses, request body size limit, optional `ALLOWED_HOSTS`. |
+| Output | CSV exports neutralise spreadsheet formula injection. Server errors never leak internals, and validation errors do not echo what the client sent. API docs are disabled unless `ENABLE_DOCS=true`. |
+| Supply chain | Python dependencies are installed from `requirements.lock` with `--require-hashes`, so a tampered or substituted package fails the build. The Docker build runs `npm ci --ignore-scripts`. |
+| Containers | The compose file runs the application with a read-only root filesystem, no Linux capabilities, `no-new-privileges`, a process limit, and the database on an internal network with no published port. The image runs as an unprivileged user. |
+| Audit | Registrations, sign-ins, lockouts, password changes, session revocations and every administrator action are recorded and shown in the admin console. |
+
+Nothing is perfectly secure. These measures reduce the chance and the damage of an attack; they do
+not remove the need to keep the server, Docker images and dependencies updated, use long unique
+passwords, and keep `SECRET_KEY` and the database credentials private.
 
 Fail-closed by design: the application never runs without authentication. If no administrator is
 configured it still starts, logs a warning, and users can register, but nobody can administer.
@@ -67,7 +74,7 @@ or the official download). On Debian and Ubuntu the binary is `/usr/games/stockf
 ```bash
 python -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install --upgrade -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
 cp .env.example .env
 ```
 
@@ -105,11 +112,15 @@ needs updating.
 
 ### Updating dependencies
 
-Python uses `pip`'s explicit `--upgrade` option:
+Python dependencies are pinned with hashes in `requirements.lock`, generated from
+`requirements.txt`. To refresh them, regenerate the lock, run the audits, and commit the result:
 
 ```bash
-python -m pip install --upgrade pip
-python -m pip install --upgrade -r requirements.txt
+python -m pip install pip-tools pip-audit
+python -m piptools compile --upgrade --quiet --no-annotate --no-header --generate-hashes --output-file requirements.lock requirements.txt
+python -m pip install --require-hashes -r requirements.lock
+pip-audit -r requirements.lock
+cd frontend && npm audit
 ```
 
 For npm, `npm ci` is intentionally used for normal builds because it installs the exact

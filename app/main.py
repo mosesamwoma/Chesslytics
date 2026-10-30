@@ -6,9 +6,11 @@ import os
 import sys
 import threading
 import time
+from typing import Optional
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
+from fastapi.exceptions import RequestValidationError
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -35,6 +37,7 @@ from app.services import (
     analysis_service,
     digest_service,
     export_service,
+    session_service,
     tactics_service,
     job_service,
     token_service,
@@ -49,18 +52,25 @@ DEFAULT_PGN = os.path.join("data", "Jude254_vs_manmusaa_2026.09.30.pgn")
 JSON_BODY_LIMIT = 1024 * 1024
 UPLOAD_OVERHEAD = 1024 * 1024
 CONTENT_SECURITY_POLICY = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
     "img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; "
+    "manifest-src 'self'; worker-src 'self'; media-src 'none'; frame-src 'none'; "
     "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 )
+HTTPS_ONLY_DIRECTIVE = "; upgrade-insecure-requests"
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Permissions-Policy": (
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), "
+        "bluetooth=(), interest-cohort=()"
+    ),
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
+    "X-Permitted-Cross-Domain-Policies": "none",
 }
+HEALTH_PATHS = ("/api/health", "/healthz")
 DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
 
 
@@ -143,8 +153,13 @@ async def lifespan(_app: FastAPI):
         user_service.bootstrap_admin(session)
         user_service.prune_audit(session)
         token_service.prune(session)
+        session_service.prune(session)
     job_service.recover_interrupted()
     digest_service.scheduler.start()
+    if not os.environ.get("ALLOWED_HOSTS", "").strip() and (
+        settings.public_url().startswith("https://") or settings.env_bool("COOKIE_SECURE", False)
+    ):
+        logger.warning("ALLOWED_HOSTS is empty; set it to your domain to reject forged Host headers")
     threading.Thread(target=tactics_service.run_background, name="tactics", daemon=True).start()
     yield
     digest_service.scheduler.stop()
@@ -176,23 +191,55 @@ app = FastAPI(
 )
 
 
+def request_origin(request: Request) -> str:
+    scheme = "https" if security.is_https(request) else "http"
+    return f"{scheme}://{request.headers.get('host', '')}".lower()
+
+
+def cross_site_request(request: Request) -> bool:
+    site = request.headers.get("sec-fetch-site", "").lower()
+    if site == "cross-site":
+        return True
+    origin = request.headers.get("origin")
+    if origin is None:
+        return False
+    cleaned = origin.strip().rstrip("/").lower()
+    if cleaned == "null":
+        return True
+    allowed = {request_origin(request), *(item.lower() for item in cors_origins())}
+    return cleaned not in allowed
+
+
 @app.middleware("http")
 async def protect(request: Request, call_next):
     path = request.url.path
     is_api = path.startswith("/api/")
-    if (
-        is_api
-        and request.method not in auth.SAFE_METHODS
-        and not request.headers.get(auth.CSRF_HEADER)
-    ):
-        response = JSONResponse({"detail": "missing request protection header"}, status_code=403)
-    else:
-        response = await call_next(request)
+    refusal: Optional[JSONResponse] = None
+    if is_api and request.method not in auth.SAFE_METHODS:
+        if not request.headers.get(auth.CSRF_HEADER):
+            refusal = JSONResponse(
+                {"detail": "missing request protection header"}, status_code=403
+            )
+        elif cross_site_request(request):
+            refusal = JSONResponse({"detail": "cross-site request refused"}, status_code=403)
+    limit = settings.api_rate_limit_per_minute()
+    if refusal is None and is_api and limit and path not in HEALTH_PATHS:
+        wait = security.limiter.consume(f"api:{security.client_ip(request)}", limit, 60)
+        if wait:
+            refusal = JSONResponse(
+                {"detail": f"too many requests; try again in {wait} seconds"},
+                status_code=429,
+                headers={"Retry-After": str(wait)},
+            )
+    response = refusal if refusal is not None else await call_next(request)
 
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
     if not (docs_on and path in DOC_PATHS):
-        response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        policy = CONTENT_SECURITY_POLICY
+        if security.is_https(request):
+            policy += HTTPS_ONLY_DIRECTIVE
+        response.headers.setdefault("Content-Security-Policy", policy)
     if security.is_https(request):
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
@@ -234,6 +281,15 @@ app.include_router(analysis.router)
 app.include_router(patterns.router)
 app.include_router(training.router)
 app.include_router(coach.router)
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    problems = [
+        {"loc": [str(part) for part in item.get("loc", ())], "msg": str(item.get("msg", "invalid value"))}
+        for item in exc.errors()
+    ]
+    return JSONResponse({"detail": problems}, status_code=422)
 
 
 @app.get("/api/health")

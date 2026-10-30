@@ -303,6 +303,10 @@ def solver_node_budget() -> int:
     return env_int("SOLVER_NODE_BUDGET", 20000, minimum=1000, maximum=500000)
 
 
+def api_rate_limit_per_minute() -> int:
+    return env_int("API_RATE_LIMIT_PER_MINUTE", 600, minimum=0, maximum=100000)
+
+
 def daily_puzzle_goal() -> int:
     return env_int("DAILY_PUZZLE_GOAL", 5, minimum=1, maximum=100)
 

@@ -10,6 +10,7 @@ import secrets
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Optional
 
 from starlette.requests import Request
@@ -53,7 +54,22 @@ COMMON_PASSWORDS = {
     "9876543210",
 }
 
-TOKEN_VERSION = "v1"
+TOKEN_VERSION = "v2"
+COMMON_PASSWORD_FILE = Path(__file__).resolve().parent / "data" / "common_passwords.txt"
+TRAILING_FILLER = "0123456789!@#$%^&*()-_=+.,?"
+_common_cache: dict = {"words": None}
+
+
+def common_password_list() -> frozenset:
+    words = _common_cache["words"]
+    if words is None:
+        try:
+            text = COMMON_PASSWORD_FILE.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        words = frozenset(line for line in text.splitlines() if line)
+        _common_cache["words"] = words
+    return words
 
 
 def _b64encode(data: bytes) -> str:
@@ -155,6 +171,10 @@ def password_error(password: str, username: Optional[str] = None) -> Optional[st
     lowered = password.lower()
     if lowered in COMMON_PASSWORDS or "change_me" in lowered or "changeme" in lowered:
         return "that password is too common"
+    common = common_password_list()
+    stripped = lowered.strip(TRAILING_FILLER)
+    if lowered in common or (len(stripped) >= 4 and stripped in common):
+        return "that password is too common"
     if len(set(password)) < 4:
         return "password needs more variety"
     if username and len(username) >= 3 and normalize_username(username) in lowered:
@@ -162,10 +182,18 @@ def password_error(password: str, username: Optional[str] = None) -> Optional[st
     return None
 
 
-def create_session_token(user_id: int, version: int, now: Optional[float] = None) -> str:
+def create_session_token(
+    user_id: int, version: int, sid: str, now: Optional[float] = None
+) -> str:
     issued = int(time.time() if now is None else now)
     ttl = int(settings.session_hours() * 3600)
-    payload = {"uid": user_id, "ver": version, "iat": issued, "exp": issued + ttl}
+    payload = {
+        "uid": user_id,
+        "ver": version,
+        "sid": sid,
+        "iat": issued,
+        "exp": issued + ttl,
+    }
     body = _b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = _sign(f"{TOKEN_VERSION}.{body}")
     return f"{TOKEN_VERSION}.{body}.{signature}"
@@ -189,12 +217,15 @@ def read_session_token(token: str, now: Optional[float] = None) -> Optional[dict
         token_version = int(payload["ver"])
         expires = int(payload["exp"])
         issued = int(payload["iat"])
+        sid = str(payload["sid"])
     except (ValueError, KeyError, TypeError, UnicodeError):
+        return None
+    if not sid or len(sid) > 128:
         return None
     current = time.time() if now is None else now
     if current >= expires:
         return None
-    return {"uid": user_id, "ver": token_version, "exp": expires, "iat": issued}
+    return {"uid": user_id, "ver": token_version, "sid": sid, "exp": expires, "iat": issued}
 
 
 def client_ip(request: Request) -> str:

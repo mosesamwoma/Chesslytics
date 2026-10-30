@@ -21,6 +21,14 @@ logger = logging.getLogger("chesslytics")
 
 SMTP_TIMEOUT_SECONDS = 15
 API_TIMEOUT_SECONDS = 20
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_opener = urllib.request.build_opener(urllib.request.HTTPSHandler(), _NoRedirect())
 BREVO_URL = "https://api.brevo.com/v3/smtp/email"
 RESEND_URL = "https://api.resend.com/emails"
 MAILJET_URL = "https://api.mailjet.com/v3.1/send"
@@ -50,6 +58,8 @@ def email_error(value: str) -> Optional[str]:
 
 
 def post_raw(url: str, headers: dict[str, str], data: bytes, content_type: str) -> bytes:
+    if not url.startswith("https://"):
+        raise RuntimeError("mail services must be reached over HTTPS")
     request = urllib.request.Request(
         url,
         data=data,
@@ -62,7 +72,7 @@ def post_raw(url: str, headers: dict[str, str], data: bytes, content_type: str) 
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=API_TIMEOUT_SECONDS) as response:
+        with _opener.open(request, timeout=API_TIMEOUT_SECONDS) as response:
             return response.read(65536)
     except urllib.error.HTTPError as exc:
         detail = exc.read(300).decode("utf-8", errors="replace")

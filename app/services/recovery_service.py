@@ -38,7 +38,8 @@ def digest(normalized: str) -> str:
 def issue(session: Session, user: User) -> str:
     code = generate()
     normalized = normalize(code)
-    assert normalized is not None
+    if normalized is None:
+        raise RuntimeError("generated an invalid recovery code")
     user.recovery_hash = digest(normalized)
     user.recovery_created_at = utcnow()
     session.flush()

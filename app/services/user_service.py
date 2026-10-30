@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import mailer, security, settings
+from app.services import session_service
 from app.database.models import (
     AccountToken,
     AnalysisJob,
@@ -187,6 +188,7 @@ def change_password(session: Session, user: User, new_password: str) -> None:
     user.token_version = (user.token_version or 0) + 1
     user.failed_logins = 0
     user.locked_until = None
+    session_service.end_all(session, user.id)
     session.flush()
 
 

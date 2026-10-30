@@ -137,7 +137,7 @@ def store_games(
 
     seen: set[str] = set()
     fresh: list[tuple[dict, chess.pgn.Game]] = []
-    for meta, game in zip(metas, games):
+    for meta, game in zip(metas, games, strict=True):
         fingerprint = meta["fingerprint"]
         fingerprints.append(fingerprint)
         if fingerprint in known or fingerprint in seen:

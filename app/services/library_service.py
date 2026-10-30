@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import csv
 import io
-import random
 import re
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -218,7 +218,7 @@ def pick(
     total = int(session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
     if total == 0:
         return None
-    offset = random.randrange(total)
+    offset = secrets.randbelow(total)
     return session.scalar(statement.order_by(LibraryPuzzle.id).offset(offset).limit(1))
 
 
